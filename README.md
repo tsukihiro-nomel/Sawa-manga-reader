@@ -1,59 +1,59 @@
-# Sawa Manga Library â€” v1.1.0
+# Sawa Manga Library — v1.1.0
 
-Sawa Manga Library est un lecteur/bibliothÃ¨que de mangas **local** pour PC, construit avec **Electron + React + Vite**.
+Sawa Manga Library est un lecteur/bibliothèque de mangas **local** pour PC, construit avec **Electron + React + Vite**.
 
-Lâ€™application a Ã©tÃ© pensÃ©e pour une bibliothÃ¨que organisÃ©e par dossiers :
+L’application a été pensée pour une bibliothèque organisée par dossiers :
 
-- un dossier = **une catÃ©gorie**
-- dans la catÃ©gorie, un sous-dossier = **un manga**
+- un dossier = **une catégorie**
+- dans la catégorie, un sous-dossier = **un manga**
 - dans le manga, des sous-dossiers = **les chapitres**
-- si le manga ne contient pas de sous-dossiers chapitre, il est traitÃ© comme **one-shot / chapitre unique**
-- les pages sont les images numÃ©rotÃ©es Ã  lâ€™intÃ©rieur du chapitre
+- si le manga ne contient pas de sous-dossiers chapitre, il est traité comme **one-shot / chapitre unique**
+- les pages sont les images numérotées à l’intérieur du chapitre
 
 ---
 
-## 1. FonctionnalitÃ©s principales
+## 1. Fonctionnalités principales
 
-### BibliothÃ¨que
-- import de catÃ©gories locales
+### Bibliothèque
+- import de catégories locales
 - scan automatique des mangas/chapitres/pages
 - recherche
 - tri
 - favoris
-- rÃ©cents
-- catÃ©gories masquÃ©es / affichÃ©es
-- couvertures personnalisÃ©es
-- mÃ©tadonnÃ©es locales : titre, auteur, description
+- récents
+- catégories masquées / affichées
+- couvertures personnalisées
+- métadonnées locales : titre, auteur, description
 
 ### Onglets
-- onglets multiples faÃ§on navigateur
-- restauration des onglets au redÃ©marrage
-- fermeture dâ€™onglet
-- rÃ©organisation drag & drop
-- ouverture en arriÃ¨re-plan avec clic molette
+- onglets multiples façon navigateur
+- restauration des onglets au redémarrage
+- fermeture d’onglet
+- réorganisation drag & drop
+- ouverture en arrière-plan avec clic molette
 
 ### Lecture
 - mode **page simple**
 - mode **double page**
 - mode **webtoon / scroll vertical**
 - zoom + / - / reset
-- navigation chapitre prÃ©cÃ©dent / suivant
-- menu dÃ©roulant de sÃ©lection de chapitre
-- masquage de lâ€™UI en lecture
-- plein Ã©cran
+- navigation chapitre précédent / suivant
+- menu déroulant de sélection de chapitre
+- masquage de l’UI en lecture
+- plein écran
 
 ### Personnalisation
-- thÃ¨mes : Dark Night, Light Paper, Coffee House, Neon City
+- thèmes : Dark Night, Light Paper, Coffee House, Neon City
 - accent couleur personnalisable
 - accent secondaire personnalisable
 - tailles de cartes
-- preview avant lecture activable / dÃ©sactivable
+- preview avant lecture activable / désactivable
 
 ### Progression
 - suivi de progression par chapitre
-- rÃ©cents
+- récents
 - marquage **lu / non lu**
-- rÃ©initialisation de progression
+- réinitialisation de progression
 
 ---
 
@@ -77,11 +77,11 @@ Categorie_A/
 ```
 
 Dans ce cas :
-- `Categorie_A` = une catÃ©gorie
+- `Categorie_A` = une catégorie
 - `Manga 1` = manga multi-chapitres
 - `Manga 2` = one-shot
 
-Formats dâ€™images supportÃ©s par le scanner :
+Formats d’images supportés par le scanner :
 - jpg / jpeg
 - png
 - webp
@@ -98,12 +98,12 @@ Formats dâ€™images supportÃ©s par le scanner :
 
 ### Frontend
 - **React 18**
-- CSS maison centralisÃ© dans `src/styles/globals.css`
-- `lucide-react` pour les icÃ´nes
+- CSS maison centralisé dans `src/styles/globals.css`
+- `lucide-react` pour les icônes
 
 ### Desktop shell
 - **Electron**
-- preload sÃ©curisÃ© via `contextBridge`
+- preload sécurisé via `contextBridge`
 - protocole custom `manga://local/...` pour charger les images locales
 
 ### Build web
@@ -113,10 +113,10 @@ Formats dâ€™images supportÃ©s par le scanner :
 - **electron-builder**
 - sorties : `nsis`, `msi`, `portable`
 
-### Watch du systÃ¨me de fichiers
+### Watch du système de fichiers
 - **chokidar**
 
-### Drag & drop dâ€™onglets
+### Drag & drop d’onglets
 - **@dnd-kit/core**
 - **@dnd-kit/sortable**
 - **@dnd-kit/utilities**
@@ -161,59 +161,59 @@ build/
 
 ---
 
-## 5. MÃ©thodes utilisÃ©es dans lâ€™application
+## 5. Méthodes utilisées dans l’application
 
 ### 5.1 Scan et indexation
 Le service `libraryScanner.cjs` :
-- parcourt les catÃ©gories enregistrÃ©es
-- dÃ©tecte les mangas
-- dÃ©tecte les chapitres
-- dÃ©tecte les pages images
-- gÃ©nÃ¨re des identifiants stables Ã  partir des chemins
-- construit les sources `manga://local/...` pour lâ€™affichage dans Electron
+- parcourt les catégories enregistrées
+- détecte les mangas
+- détecte les chapitres
+- détecte les pages images
+- génère des identifiants stables à partir des chemins
+- construit les sources `manga://local/...` pour l’affichage dans Electron
 
 ### 5.2 Persistance locale
-Le service `storage.cjs` maintient un JSON dâ€™Ã©tat utilisateur avec :
-- catÃ©gories
-- session dâ€™onglets
+Le service `storage.cjs` maintient un JSON d’état utilisateur avec :
+- catégories
+- session d’onglets
 - UI
-- mÃ©tadonnÃ©es
+- métadonnées
 - favoris
 - statut lu / non lu
 - progression
-- rÃ©cents
+- récents
 
 ### 5.3 Watch des dossiers
-Le watcher observe les catÃ©gories importÃ©es et force un refresh propre si :
-- un manga est ajoutÃ©
-- un chapitre est ajoutÃ©
+Le watcher observe les catégories importées et force un refresh propre si :
+- un manga est ajouté
+- un chapitre est ajouté
 - des pages changent
 
 ### 5.4 Navigation en onglets
-Chaque onglet possÃ¨de une **stack de vues** :
-- bibliothÃ¨que
-- dÃ©tail manga
+Chaque onglet possède une **stack de vues** :
+- bibliothèque
+- détail manga
 - preview chapitre
 - lecteur
 
-Cela permet un comportement proche dâ€™un navigateur :
-- retour dans lâ€™historique local de lâ€™onglet
-- ouverture en arriÃ¨re-plan
-- restauration au redÃ©marrage
+Cela permet un comportement proche d’un navigateur :
+- retour dans l’historique local de l’onglet
+- ouverture en arrière-plan
+- restauration au redémarrage
 
 ### 5.5 Lecteur
-Le lecteur gÃ¨re :
+Le lecteur gère :
 - simple page
 - double spread
 - webtoon
 - zoom
 - changement de chapitre
 - sauvegarde de progression
-- masquage dâ€™UI
+- masquage d’UI
 
 ### 5.6 Carrousel home
 Le carrousel :
-- choisit des mangas alÃ©atoires Ã  lâ€™ouverture
+- choisit des mangas aléatoires à l’ouverture
 - duplique logiquement les cartes pour un scroll infini
 - supporte le scroll manuel par boutons et drag souris
 - applique un petit effet de parallaxe au hover
@@ -226,13 +226,13 @@ Le menu clic droit varie selon le contexte :
 - onglet
 - lecteur
 
-Exemples dâ€™actions :
+Exemples d’actions :
 - ouvrir dans cet onglet
 - ouvrir dans un nouvel onglet
 - favoris
 - marquer lu / non lu
 - reset progression
-- Ã©diter les mÃ©tadonnÃ©es
+- éditer les métadonnées
 - changer la couverture
 
 ---
@@ -270,9 +270,9 @@ release/
 
 ---
 
-## 8. IcÃ´ne personnalisÃ©e
+## 8. Icône personnalisée
 
-Place ton icÃ´ne Windows ici :
+Place ton icône Windows ici :
 
 ```text
 build/icon.ico
@@ -291,49 +291,49 @@ Puis relance un build.
 ## 9. Raccourcis utiles
 
 ### Lecture
-- `â†` / `â†’` : page prÃ©cÃ©dente / suivante
-- `Ctrl + â†` : chapitre prÃ©cÃ©dent
-- `Ctrl + â†’` : chapitre suivant
+- `←` / `→` : page précédente / suivante
+- `Ctrl + ←` : chapitre précédent
+- `Ctrl + →` : chapitre suivant
 - `+` / `-` : zoom
 - `0` : reset zoom
-- `F` : plein Ã©cran
-- `H` : afficher / masquer lâ€™UI
+- `F` : plein écran
+- `H` : afficher / masquer l’UI
 - `Esc` : quitter la lecture
 
 ### Onglets
-- clic molette sur manga / chapitre : ouvrir dans un nouvel onglet en arriÃ¨re-plan
+- clic molette sur manga / chapitre : ouvrir dans un nouvel onglet en arrière-plan
 - clic molette sur onglet : fermeture
-- `Ctrl + Z` : fermer lâ€™onglet actif
+- `Ctrl + Z` : fermer l’onglet actif
 
 ---
 
 ## 10. Notes de design
 
-Le projet vise une interface locale inspirÃ©e des apps manga/comics modernes :
+Le projet vise une interface locale inspirée des apps manga/comics modernes :
 - navigation rapide
 - gros visuels
 - lecteur immersif
-- animation discrÃ¨te
-- ergonomie orientÃ©e collection personnelle
+- animation discrète
+- ergonomie orientée collection personnelle
 
 ---
 
 ## 11. Limites actuelles
 
 - pas de sync cloud
-- pas dâ€™OPDS
+- pas d’OPDS
 - pas de base distante
-- pas de scraping automatique de mÃ©tadonnÃ©es
+- pas de scraping automatique de métadonnées
 - le statut lu / non lu est manuel
 
 ---
 
-## 12. Ã‰volutions possibles
+## 12. Évolutions possibles
 
 - tags / collections intelligentes
 - pin tabs
-- duplication dâ€™onglet
-- prÃ©chargement du chapitre suivant
-- cache image mÃ©moire/disque plus poussÃ©
+- duplication d’onglet
+- préchargement du chapitre suivant
+- cache image mémoire/disque plus poussé
 - lecteur panel-by-panel
-- import/export complet des prÃ©fÃ©rences
+- import/export complet des préférences
