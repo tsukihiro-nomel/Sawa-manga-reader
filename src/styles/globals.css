@@ -5954,6 +5954,7 @@ body *::-webkit-scrollbar-thumb:hover,
   flex-direction: column;
   overflow: hidden;
   cursor: pointer;
+  contain: layout style paint;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 

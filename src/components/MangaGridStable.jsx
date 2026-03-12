@@ -5,8 +5,19 @@ const OVERSCAN_PX = 600;
 const HYDRATION_BATCH = 8;
 const HYDRATION_DELAY = 80;
 const RESIZE_DEBOUNCE = 120;
+const CACHE_MAX_SIZE = 500;
 
 const hydrationCache = new Map();
+
+function trimCache() {
+  if (hydrationCache.size <= CACHE_MAX_SIZE) return;
+  const excess = hydrationCache.size - CACHE_MAX_SIZE;
+  const keys = hydrationCache.keys();
+  for (let i = 0; i < excess; i++) {
+    const { value } = keys.next();
+    hydrationCache.delete(value);
+  }
+}
 
 function middleMouseDown(event) {
   if (event.button !== 1) return;
@@ -256,6 +267,11 @@ function MangaGridStable({
   const hydrationLoadingRef = useRef(new Set());
   const total = mangas.length;
 
+  const stableOpenManga = useCallback((id) => onOpenManga(id), [onOpenManga]);
+  const stableOpenBg = useCallback((id) => onOpenMangaInBackgroundTab?.(id), [onOpenMangaInBackgroundTab]);
+  const stableToggleFav = useCallback((id) => onToggleFavorite(id), [onToggleFavorite]);
+  const stableContextMenu = useCallback((e, d) => onContextMenu(e, d), [onContextMenu]);
+
   const layout = useGridLayout(shellRef);
 
   const [hydratedMap, setHydratedMap] = useState(() => {
@@ -271,6 +287,13 @@ function MangaGridStable({
     const root = findScrollRoot(shellRef.current);
     scrollRootRef.current = root;
     setScrollRoot(root);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(hydrationTimerRef.current);
+      hydrationLoadingRef.current.clear();
+    };
   }, []);
 
   const { startIndex, endIndex, topPadding, bottomPadding } = useVirtualWindow(
@@ -330,6 +353,7 @@ function MangaGridStable({
           hydrationCache.set(manga.id, manga);
           entries[manga.id] = manga;
         }
+        trimCache();
         if (Object.keys(entries).length) {
           setHydratedMap((prev) => ({ ...prev, ...entries }));
         }
@@ -371,10 +395,10 @@ function MangaGridStable({
             key={manga.id}
             manga={manga}
             priority={startIndex + i < 6}
-            onOpenManga={onOpenManga}
-            onOpenMangaInBackgroundTab={onOpenMangaInBackgroundTab}
-            onToggleFavorite={onToggleFavorite}
-            onContextMenu={onContextMenu}
+            onOpenManga={stableOpenManga}
+            onOpenMangaInBackgroundTab={stableOpenBg}
+            onToggleFavorite={stableToggleFav}
+            onContextMenu={stableContextMenu}
           />
         ))}
       </div>
