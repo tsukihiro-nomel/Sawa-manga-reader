@@ -1,3 +1,113 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:eecaef25d9979ddcde5a1460dd351672f4b47e409034c19a6ad7deca9558d29a
-size 4310
+import { memo, useEffect, useLayoutEffect, useRef } from 'react';
+import { ChevronLeftIcon, PlusIcon } from './Icons.jsx';
+
+function restoreScrollPosition(element, value) {
+  if (!element) return () => {};
+
+  const target = Math.max(0, Number(value || 0));
+  let cancelled = false;
+  let userInteracted = false;
+
+  const timers = [];
+  const cleanups = [];
+
+  const apply = () => {
+    if (cancelled || userInteracted) return;
+    if (Math.abs((element.scrollTop || 0) - target) < 2) return;
+    element.scrollTo({ top: target, behavior: 'auto' });
+  };
+
+  const stopRestoring = () => {
+    userInteracted = true;
+  };
+
+  ['wheel', 'touchstart', 'pointerdown', 'mousedown', 'keydown'].forEach((eventName) => {
+    const handler = () => stopRestoring();
+    element.addEventListener(eventName, handler, { passive: true });
+    cleanups.push(() => element.removeEventListener(eventName, handler));
+  });
+
+  const raf1 = window.requestAnimationFrame(() => apply());
+  const raf2 = window.requestAnimationFrame(() => window.requestAnimationFrame(() => apply()));
+  timers.push(window.setTimeout(() => apply(), 90));
+  timers.push(window.setTimeout(() => apply(), 180));
+
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(() => apply());
+    observer.observe(element);
+    cleanups.push(() => observer.disconnect());
+    timers.push(window.setTimeout(() => observer.disconnect(), 280));
+  }
+
+  return () => {
+    cancelled = true;
+    window.cancelAnimationFrame(raf1);
+    window.cancelAnimationFrame(raf2);
+    timers.forEach((timer) => window.clearTimeout(timer));
+    cleanups.forEach((cleanup) => cleanup());
+  };
+}
+
+function middleMouseDown(event) {
+  if (event.button !== 1) return;
+  event.preventDefault();
+}
+
+function middleMouseUp(event, callback) {
+  if (event.button !== 1) return;
+  event.preventDefault();
+  event.stopPropagation();
+  callback();
+}
+
+function ChapterPreviewView({ manga, chapter, initialScrollTop = 0, onScrollPositionChange, onBack, onReadFrom, onReadFromNewTab, onReadFromBackgroundTab, onContextMenu }) {
+  const containerRef = useRef(null);
+  const isLoadingPages = !Array.isArray(chapter.pages);
+
+  useEffect(() => () => {
+    if (containerRef.current) onScrollPositionChange?.(containerRef.current.scrollTop);
+  }, [onScrollPositionChange]);
+
+  useLayoutEffect(() => restoreScrollPosition(containerRef.current, initialScrollTop), [initialScrollTop, chapter.id]);
+
+  return (
+    <section className="preview-view" ref={containerRef} onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}>
+      <div className="preview-header" onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter })}>
+        <button className="ghost-button back-button" onClick={onBack}><ChevronLeftIcon size={16} /> Retour aux chapitres</button>
+        <div>
+          <h2>{manga.displayTitle}</h2>
+          <p>{chapter.name} · {chapter.pageCount} pages</p>
+        </div>
+        <div className="detail-actions-row">
+          <button className="primary-button" onClick={() => onReadFrom(0)} disabled={isLoadingPages}>Lire depuis le début</button>
+          <button className="ghost-button" onClick={() => onReadFromNewTab(0)} disabled={isLoadingPages}><PlusIcon size={16} /> Nouvel onglet</button>
+        </div>
+      </div>
+
+      {isLoadingPages ? (
+        <div className="empty-card">
+          <h3>Préparation du chapitre…</h3>
+          <p>Les pages sont chargées à la demande pour garder l’application rapide.</p>
+        </div>
+      ) : (
+        <div className="page-preview-grid">
+          {chapter.pages.map((page) => (
+            <button
+              key={page.id}
+              className="page-thumb"
+              onClick={() => onReadFrom(page.index)}
+              onMouseDown={middleMouseDown}
+              onMouseUp={(event) => middleMouseUp(event, () => onReadFromBackgroundTab(page.index))}
+              onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter, pageIndex: page.index })}
+            >
+              <img src={page.src} alt={`Page ${page.index + 1}`} loading="lazy" />
+              <span>Page {page.index + 1}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export default memo(ChapterPreviewView);
