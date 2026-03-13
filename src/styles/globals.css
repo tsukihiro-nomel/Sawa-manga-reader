@@ -5948,12 +5948,29 @@ body *::-webkit-scrollbar-thumb:hover,
   gap: 20px;
 }
 
+.manga-grid-virtual {
+  display: block !important;
+  position: relative;
+  width: 100%;
+}
+
+.manga-grid-virtual-window {
+  display: grid;
+  align-content: start;
+  align-items: start;
+  justify-content: stretch;
+  will-change: transform;
+}
+
 .library-view .manga-card-stable,
 .library-view-dashboard .manga-card-stable {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   cursor: pointer;
+}
+
+.manga-grid-stable:not(.manga-grid-virtual) .manga-card-stable {
   content-visibility: auto;
   contain-intrinsic-size: auto 300px auto 480px;
 }

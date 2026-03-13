@@ -2,4 +2,6 @@
 .gitattributes !filter !diff !merge text
 src/components/MangaGridStable.jsx !filter !diff !merge text
 src/components/ReaderView.jsx !filter !diff !merge text
+src/components/LibraryView.jsx !filter !diff !merge text
+src/components/CollectionsView.jsx !filter !diff !merge text
 src/styles/globals.css !filter !diff !merge text

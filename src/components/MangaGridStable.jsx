@@ -3,9 +3,10 @@ import { HeartIcon } from './Icons.jsx';
 
 const HYDRATION_BATCH = 20;
 const HYDRATION_DELAY = 40;
-const INITIAL_RENDER_COUNT = 32;
-const LOAD_MORE_COUNT = 20;
-const SENTINEL_ROOT_MARGIN = '400px 0px';
+const OVERSCAN_ROWS = 4;
+const CARD_GAP = 20;
+const DEFAULT_CARD_MIN = 215;
+const CARD_BODY_EST = 200;
 const hydrationCache = new Map();
 const mergedCardCache = new Map();
 
@@ -101,6 +102,15 @@ const MangaCard = memo(function MangaCard({
   );
 });
 
+function computeGridLayout(containerWidth) {
+  if (containerWidth <= 0) return { columns: 4, rowHeight: 500 };
+  const cols = Math.max(1, Math.floor((containerWidth + CARD_GAP) / (DEFAULT_CARD_MIN + CARD_GAP)));
+  const cardWidth = (containerWidth - (cols - 1) * CARD_GAP) / cols;
+  const coverHeight = cardWidth / 0.72;
+  const rowHeight = coverHeight + CARD_BODY_EST + CARD_GAP;
+  return { columns: cols, rowHeight };
+}
+
 function MangaGridStable({
   mangas,
   progressive = false,
@@ -111,9 +121,9 @@ function MangaGridStable({
   onToggleFavorite,
   onContextMenu
 }) {
+  const gridRef = useRef(null);
   const hydrationTimerRef = useRef(0);
   const hydrationLoadingRef = useRef(new Set());
-  const sentinelRef = useRef(null);
   const total = mangas.length;
 
   const stableOpenManga = useCallback((id) => onOpenManga(id), [onOpenManga]);
@@ -122,29 +132,72 @@ function MangaGridStable({
   const stableContextMenu = useCallback((e, d) => onContextMenu(e, d), [onContextMenu]);
 
   const [hydrationVersion, setHydrationVersion] = useState(0);
-  const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER_COUNT);
+  const [layout, setLayout] = useState({ columns: 4, rowHeight: 500 });
+  const [visibleWindow, setVisibleWindow] = useState({ startRow: 0, endRow: 10 });
 
+  // Measure grid width → compute columns and row height
   useEffect(() => {
-    setRenderLimit(INITIAL_RENDER_COUNT);
-  }, [mangas]);
+    const grid = gridRef.current;
+    if (!grid) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setLayout(computeGridLayout(entry.contentRect.width));
+    });
+    ro.observe(grid);
+    return () => ro.disconnect();
+  }, []);
 
+  // Track parent scroll container → compute visible row range
   useEffect(() => {
-    if (renderLimit >= total) return undefined;
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return undefined;
+    if (!progressive || total === 0) return;
+    const grid = gridRef.current;
+    if (!grid) return;
+    const scrollContainer = grid.closest('.curved-scroll-content');
+    if (!scrollContainer) return;
 
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setRenderLimit((prev) => Math.min(prev + LOAD_MORE_COUNT, total));
-        }
-      },
-      { rootMargin: SENTINEL_ROOT_MARGIN }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [renderLimit, total]);
+    let rafId = 0;
 
+    function update() {
+      const st = scrollContainer.scrollTop;
+      const vh = scrollContainer.clientHeight;
+      const gridRect = grid.getBoundingClientRect();
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const gridTop = gridRect.top - containerRect.top + st;
+      const relScroll = Math.max(0, st - gridTop);
+      const { columns, rowHeight } = layout;
+      if (rowHeight <= 0 || columns <= 0) return;
+      const totalRows = Math.ceil(total / columns);
+      const firstRow = Math.floor(relScroll / rowHeight);
+      const lastRow = Math.min(totalRows - 1, Math.ceil((relScroll + vh) / rowHeight));
+      const sRow = Math.max(0, firstRow - OVERSCAN_ROWS);
+      const eRow = Math.min(totalRows - 1, lastRow + OVERSCAN_ROWS);
+      setVisibleWindow((prev) => {
+        if (prev.startRow === sRow && prev.endRow === eRow) return prev;
+        return { startRow: sRow, endRow: eRow };
+      });
+    }
+
+    const onScroll = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(update);
+    };
+
+    update();
+    scrollContainer.addEventListener('scroll', onScroll, { passive: true });
+
+    const sizeObs = new ResizeObserver(() => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(update);
+    });
+    sizeObs.observe(scrollContainer);
+
+    return () => {
+      scrollContainer.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(rafId);
+      sizeObs.disconnect();
+    };
+  }, [progressive, total, layout]);
+
+  // Cleanup hydration timers on unmount
   useEffect(() => {
     return () => {
       window.clearTimeout(hydrationTimerRef.current);
@@ -152,6 +205,7 @@ function MangaGridStable({
     };
   }, []);
 
+  // Merge summary data with hydrated card data
   const allCards = useMemo(() => {
     return mangas.map((summary) => {
       const hydrated = hydrationCache.get(summary.id);
@@ -177,6 +231,7 @@ function MangaGridStable({
     });
   }, [mangas, hydrationVersion]);
 
+  // Hydration: fetch card details in batches
   useEffect(() => {
     if (!window.mangaAPI?.getMangaCardBatch) return undefined;
 
@@ -234,27 +289,61 @@ function MangaGridStable({
     );
   }
 
+  // Non-progressive: render all items (dashboard sections with few items)
+  if (!progressive) {
+    return (
+      <div ref={gridRef} className="manga-grid manga-grid-stable">
+        {allCards.map((manga, i) => (
+          <MangaCard
+            key={manga.id}
+            manga={manga}
+            priority={i < 8}
+            onOpenManga={stableOpenManga}
+            onOpenMangaInBackgroundTab={stableOpenBg}
+            onToggleFavorite={stableToggleFav}
+            onContextMenu={stableContextMenu}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // Virtual grid: only render visible rows + overscan
+  const { columns, rowHeight } = layout;
+  const totalRows = Math.ceil(total / columns);
+  const totalHeight = totalRows * rowHeight;
+  const { startRow, endRow } = visibleWindow;
+  const startIdx = startRow * columns;
+  const endIdx = Math.min(total, (endRow + 1) * columns);
+  const visibleCards = allCards.slice(startIdx, endIdx);
+  const offsetTop = startRow * rowHeight;
+
   return (
-    <div className="manga-grid manga-grid-stable">
-      {allCards.slice(0, renderLimit).map((manga, i) => (
-        <MangaCard
-          key={manga.id}
-          manga={manga}
-          priority={i < 8}
-          onOpenManga={stableOpenManga}
-          onOpenMangaInBackgroundTab={stableOpenBg}
-          onToggleFavorite={stableToggleFav}
-          onContextMenu={stableContextMenu}
-        />
-      ))}
-      {renderLimit < total && (
-        <div
-          ref={sentinelRef}
-          className="manga-grid-sentinel"
-          aria-hidden="true"
-          style={{ gridColumn: '1 / -1', height: 1, pointerEvents: 'none' }}
-        />
-      )}
+    <div
+      ref={gridRef}
+      className="manga-grid manga-grid-stable manga-grid-virtual"
+      style={{ height: totalHeight }}
+    >
+      <div
+        className="manga-grid-virtual-window"
+        style={{
+          transform: `translateY(${offsetTop}px)`,
+          gridTemplateColumns: `repeat(${columns}, 1fr)`,
+          gap: `${CARD_GAP}px`,
+        }}
+      >
+        {visibleCards.map((manga, i) => (
+          <MangaCard
+            key={manga.id}
+            manga={manga}
+            priority={startIdx + i < 8}
+            onOpenManga={stableOpenManga}
+            onOpenMangaInBackgroundTab={stableOpenBg}
+            onToggleFavorite={stableToggleFav}
+            onContextMenu={stableContextMenu}
+          />
+        ))}
+      </div>
     </div>
   );
 }
