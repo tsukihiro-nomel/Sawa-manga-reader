@@ -3,6 +3,9 @@ import { HeartIcon } from './Icons.jsx';
 
 const HYDRATION_BATCH = 20;
 const HYDRATION_DELAY = 40;
+const INITIAL_RENDER_COUNT = 32;
+const LOAD_MORE_COUNT = 20;
+const SENTINEL_ROOT_MARGIN = '400px 0px';
 const hydrationCache = new Map();
 const mergedCardCache = new Map();
 
@@ -110,6 +113,7 @@ function MangaGridStable({
 }) {
   const hydrationTimerRef = useRef(0);
   const hydrationLoadingRef = useRef(new Set());
+  const sentinelRef = useRef(null);
   const total = mangas.length;
 
   const stableOpenManga = useCallback((id) => onOpenManga(id), [onOpenManga]);
@@ -118,6 +122,28 @@ function MangaGridStable({
   const stableContextMenu = useCallback((e, d) => onContextMenu(e, d), [onContextMenu]);
 
   const [hydrationVersion, setHydrationVersion] = useState(0);
+  const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER_COUNT);
+
+  useEffect(() => {
+    setRenderLimit(INITIAL_RENDER_COUNT);
+  }, [mangas]);
+
+  useEffect(() => {
+    if (renderLimit >= total) return undefined;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setRenderLimit((prev) => Math.min(prev + LOAD_MORE_COUNT, total));
+        }
+      },
+      { rootMargin: SENTINEL_ROOT_MARGIN }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [renderLimit, total]);
 
   useEffect(() => {
     return () => {
@@ -166,12 +192,10 @@ function MangaGridStable({
 
     let cancelled = false;
     const queue = [...idsToHydrate];
-    let pendingCount = 0;
 
     async function flushBatch() {
       if (cancelled || !queue.length) return;
       const batch = queue.splice(0, HYDRATION_BATCH);
-      pendingCount++;
       batch.forEach((id) => hydrationLoadingRef.current.add(id));
 
       try {
@@ -181,17 +205,15 @@ function MangaGridStable({
         for (const manga of result.mangas) {
           hydrationCache.set(manga.id, manga);
         }
+        setHydrationVersion((v) => v + 1);
       } catch {
         // noop
       } finally {
         batch.forEach((id) => hydrationLoadingRef.current.delete(id));
-        pendingCount--;
       }
 
       if (!cancelled && queue.length) {
         hydrationTimerRef.current = window.setTimeout(flushBatch, HYDRATION_DELAY);
-      } else if (!cancelled && pendingCount === 0) {
-        setHydrationVersion((v) => v + 1);
       }
     }
 
@@ -214,7 +236,7 @@ function MangaGridStable({
 
   return (
     <div className="manga-grid manga-grid-stable">
-      {allCards.map((manga, i) => (
+      {allCards.slice(0, renderLimit).map((manga, i) => (
         <MangaCard
           key={manga.id}
           manga={manga}
@@ -225,6 +247,14 @@ function MangaGridStable({
           onContextMenu={stableContextMenu}
         />
       ))}
+      {renderLimit < total && (
+        <div
+          ref={sentinelRef}
+          className="manga-grid-sentinel"
+          aria-hidden="true"
+          style={{ gridColumn: '1 / -1', height: 1, pointerEvents: 'none' }}
+        />
+      )}
     </div>
   );
 }

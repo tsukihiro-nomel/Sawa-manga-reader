@@ -312,10 +312,8 @@ function ReaderView({
       }
     };
     window.addEventListener('keydown', listener, true);
-    document.addEventListener('keydown', listener, true);
     return () => {
       window.removeEventListener('keydown', listener, true);
-      document.removeEventListener('keydown', listener, true);
     };
   }, [mode, chapter.id, nextChapter, onExit, onOpenChapter, previousChapter, navigationDirection, shortcuts, preferredZoom]);
 
@@ -500,6 +498,7 @@ function ReaderView({
                   className="reader-webtoon-page-image"
                   loading={index < 4 ? 'eager' : 'lazy'}
                   decoding="async"
+                  draggable={false}
                 />
               ))}
             </div>
@@ -519,6 +518,7 @@ function ReaderView({
                     className="reader-page-image reader-page-image-double"
                     loading="eager"
                     decoding="async"
+                    draggable={false}
                   />
                 );
               })}
@@ -526,7 +526,7 @@ function ReaderView({
           </CurvedScrollArea>
         ) : (
           <CurvedScrollArea className="reader-page-shell" shellClassName="reader-stage-scroll-shell" ref={singleContainerRef}>
-            <img src={safePages[currentPageIndex]?.src} alt={`Page ${currentPageIndex + 1}`} style={singleImageStyle} className="reader-page-image" loading="eager" decoding="async" />
+            <img src={safePages[currentPageIndex]?.src} alt={`Page ${currentPageIndex + 1}`} style={singleImageStyle} className="reader-page-image" loading="eager" decoding="async" draggable={false} />
           </CurvedScrollArea>
         )}
 
