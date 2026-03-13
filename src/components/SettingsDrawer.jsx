@@ -1,4 +1,4 @@
-import { MoonIcon, SparklesIcon, SunIcon } from './Icons.jsx';
+import { MoonIcon, SparklesIcon, SunIcon, DatabaseIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon } from './Icons.jsx';
 
 const THEMES = [
   {
@@ -11,7 +11,7 @@ const THEMES = [
     id: 'light-paper',
     icon: SunIcon,
     title: 'Light Paper',
-    description: 'Clair lisible, propre et beaucoup moins cassé qu’avant.'
+    description: "Clair lisible, propre et beaucoup moins cassé qu'avant."
   },
   {
     id: 'coffee-house',
@@ -60,7 +60,7 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
         <div className="settings-header">
           <div>
             <h3>Paramètres avancés</h3>
-            <p>Personnalise les thèmes, les couleurs d’accent, la densité des cartes et le comportement de la bibliothèque.</p>
+            <p>Personnalise les thèmes, les couleurs d'accent, la densité des cartes et le comportement de la bibliothèque.</p>
           </div>
           <button className="ghost-button" onClick={onClose}>Fermer</button>
         </div>
@@ -68,7 +68,7 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4>Ambiance visuelle</h4>
-            <span>Choisis le thème global de l’app.</span>
+            <span>Choisis le thème global de l'app.</span>
           </div>
           <div className="theme-grid">
             {THEMES.map((themeOption) => {
@@ -101,7 +101,7 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
               <input type="checkbox" checked={ui.showHiddenCategories} onChange={(event) => onChange({ showHiddenCategories: event.target.checked })} />
             </label>
             <label className="settings-toggle">
-              <span>Afficher l’aperçu des pages avant lecture</span>
+              <span>Afficher l'aperçu des pages avant lecture</span>
               <input type="checkbox" checked={ui.showPagePreviewBeforeReading} onChange={(event) => onChange({ showPagePreviewBeforeReading: event.target.checked })} />
             </label>
             <div className="settings-subsection">
@@ -120,7 +120,7 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
               <span>Choisis une couleur principale et une couleur secondaire plus perso.</span>
             </div>
             <ColorField
-              label="Couleur d’accent"
+              label="Couleur d'accent"
               value={ui.accent || '#8b5cf6'}
               onChange={(accent) => onChange({ accent })}
               helper="Utilisée pour les boutons actifs, la sélection et les focus."
@@ -136,6 +136,114 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
             </div>
           </section>
         </div>
+
+        {/* ── Lecture ── */}
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4>Lecture</h4>
+            <span>Paramètres du lecteur de chapitres.</span>
+          </div>
+
+          <div className="settings-subsection">
+            <h5>Seuil de marquage lu automatique</h5>
+            <div className="segmented-control segmented-control-full">
+              <button className={ui.readThreshold === 0.9 ? 'active' : ''} onClick={() => onChange({ readThreshold: 0.9 })}>90%</button>
+              <button className={ui.readThreshold === 0.95 ? 'active' : ''} onClick={() => onChange({ readThreshold: 0.95 })}>95%</button>
+              <button className={ui.readThreshold === 1.0 ? 'active' : ''} onClick={() => onChange({ readThreshold: 1.0 })}>100%</button>
+            </div>
+          </div>
+
+          <label className="settings-toggle">
+            <span>Lecture continue</span>
+            <input type="checkbox" checked={!!ui.autoNextChapter} onChange={(event) => onChange({ autoNextChapter: event.target.checked })} />
+          </label>
+          <div className="settings-note">Passer automatiquement au chapitre suivant en fin de chapitre.</div>
+
+          <label className="settings-toggle">
+            <span>Précharger le chapitre suivant</span>
+            <input type="checkbox" checked={!!ui.preloadNextChapter} onChange={(event) => onChange({ preloadNextChapter: event.target.checked })} />
+          </label>
+
+          <label className="settings-toggle">
+            <span>Masquer l'UI après inactivité</span>
+            <input type="checkbox" checked={!!ui.autoHideReaderUI} onChange={(event) => onChange({ autoHideReaderUI: event.target.checked })} />
+          </label>
+
+          <div className="settings-subsection">
+            <h5>Direction de lecture par défaut</h5>
+            <div className="segmented-control segmented-control-full">
+              <button className={ui.readDirection === 'ltr' ? 'active' : ''} onClick={() => onChange({ readDirection: 'ltr' })}>Gauche → Droite</button>
+              <button className={ui.readDirection === 'rtl' ? 'active' : ''} onClick={() => onChange({ readDirection: 'rtl' })}>Droite → Gauche</button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Métadonnées en ligne ── */}
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4>Métadonnées en ligne</h4>
+            <span>Enrichis ta bibliothèque avec des données en ligne.</span>
+          </div>
+
+          <label className="settings-toggle">
+            <span>Activer les métadonnées en ligne</span>
+            <input type="checkbox" checked={!!ui.onlineMetadata} onChange={(event) => onChange({ onlineMetadata: event.target.checked })} />
+          </label>
+          <div className="settings-note">Le logiciel reste entièrement fonctionnel hors ligne. Cette option est purement optionnelle.</div>
+
+          {ui.onlineMetadata && (
+            <div className="settings-subsection">
+              <label className="settings-toggle">
+                <span>Autoriser les couvertures en ligne</span>
+                <input type="checkbox" checked={!!ui.onlineCoverAllowed} onChange={(event) => onChange({ onlineCoverAllowed: event.target.checked })} />
+              </label>
+              <label className="settings-toggle">
+                <span>Autoriser les descriptions en ligne</span>
+                <input type="checkbox" checked={!!ui.onlineDescriptionAllowed} onChange={(event) => onChange({ onlineDescriptionAllowed: event.target.checked })} />
+              </label>
+              <label className="settings-toggle">
+                <span>Demander confirmation avant import</span>
+                <input type="checkbox" checked={!!ui.onlineConfirmBeforeImport} onChange={(event) => onChange({ onlineConfirmBeforeImport: event.target.checked })} />
+              </label>
+            </div>
+          )}
+        </div>
+
+        {/* ── Maintenance ── */}
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4>Maintenance</h4>
+            <span>Outils de gestion et de diagnostic.</span>
+          </div>
+
+          <div className="settings-grid-two">
+            <button className="ghost-button" onClick={() => onChange({ forceRescan: true })}>
+              <RefreshIcon size={16} /> Forcer un rescan complet
+            </button>
+            <button className="ghost-button" onClick={() => onChange({ clearCache: true })}>
+              <HardDriveIcon size={16} /> Vider le cache images
+            </button>
+            <button className="ghost-button" onClick={() => onChange({ exportBackup: true })}>
+              <DownloadIcon size={16} /> Exporter un backup
+            </button>
+            <button className="ghost-button" onClick={() => onChange({ importBackup: true })}>
+              <UploadIcon size={16} /> Importer un backup
+            </button>
+          </div>
+        </div>
+
+        {/* ── À propos ── */}
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4>À propos</h4>
+          </div>
+          <div className="settings-note">
+            <strong>Sawa Manga Library v2.0.0</strong>
+            <br />
+            Bibliothèque manga locale, premium, intelligente et entièrement hors ligne.
+          </div>
+        </div>
+
       </aside>
     </div>
   );
