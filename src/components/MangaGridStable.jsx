@@ -1,10 +1,8 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HeartIcon } from './Icons.jsx';
 
-const OVERSCAN_PX = 600;
-const HYDRATION_BATCH = 8;
-const HYDRATION_DELAY = 80;
-const RESIZE_DEBOUNCE = 120;
+const HYDRATION_BATCH = 12;
+const HYDRATION_DELAY = 60;
 const hydrationCache = new Map();
 const mergedCardCache = new Map();
 
@@ -25,10 +23,6 @@ function readStateLabel(readState) {
   if (readState === 'to-resume') return 'À reprendre';
   if (readState === 'in-progress') return 'En cours';
   return 'Jamais ouvert';
-}
-
-function findScrollRoot(element) {
-  return element?.closest('.curved-scroll-content') || null;
 }
 
 const MangaCard = memo(function MangaCard({
@@ -104,141 +98,6 @@ const MangaCard = memo(function MangaCard({
   );
 });
 
-function PlaceholderCard() {
-  return (
-    <article className="manga-card manga-card-stable manga-card-pending" aria-hidden="true">
-      <div className="manga-cover-wrap manga-cover-wrap-stable">
-        <div className="cover-fallback manga-cover-fallback-stable" />
-      </div>
-      <div className="manga-card-body manga-card-body-stable">
-        <div className="manga-card-topline manga-card-topline-stable">
-          <span>&nbsp;</span>
-        </div>
-        <h3>&nbsp;</h3>
-        <p className="manga-card-loading-copy">&nbsp;</p>
-        <div className="manga-card-tags-stable manga-card-tags-placeholder" aria-hidden="true">
-          <span className="manga-tag-skeleton" />
-          <span className="manga-tag-skeleton short" />
-        </div>
-      </div>
-    </article>
-  );
-}
-
-const MemoPlaceholder = memo(PlaceholderCard);
-
-function useGridLayout(shellRef) {
-  const [layout, setLayout] = useState({ columns: 4, rowHeight: 480, gap: 20 });
-
-  useEffect(() => {
-    const shell = shellRef.current;
-    if (!shell) return undefined;
-
-    let timer = 0;
-
-    function measure() {
-      const grid = shell.querySelector('.manga-grid-stable');
-      if (!grid) return;
-      const style = window.getComputedStyle(grid);
-      const cols = style.gridTemplateColumns.split(' ').filter((s) => s.trim()).length || 4;
-      const gapValue = parseFloat(style.gap) || 20;
-
-      const firstCard = grid.querySelector('.manga-card-stable');
-      const cardHeight = firstCard ? firstCard.getBoundingClientRect().height : 480;
-
-      setLayout((prev) => {
-        if (prev.columns === cols && Math.abs(prev.rowHeight - cardHeight) < 2 && prev.gap === gapValue) return prev;
-        return { columns: cols, rowHeight: cardHeight, gap: gapValue };
-      });
-    }
-
-    measure();
-
-    const observer = new ResizeObserver(() => {
-      clearTimeout(timer);
-      timer = window.setTimeout(measure, RESIZE_DEBOUNCE);
-    });
-    observer.observe(shell);
-
-    return () => {
-      clearTimeout(timer);
-      observer.disconnect();
-    };
-  }, [shellRef]);
-
-  return layout;
-}
-
-function useVirtualWindow(scrollRoot, totalItems, layout) {
-  const { columns, rowHeight, gap } = layout;
-  const totalRows = Math.ceil(totalItems / columns);
-  const totalHeight = totalRows > 0 ? totalRows * rowHeight + (totalRows - 1) * gap : 0;
-
-  const [range, setRange] = useState({ startRow: 0, endRow: Math.min(6, totalRows) });
-
-  useEffect(() => {
-    const root = scrollRoot;
-    if (!root) {
-      setRange({ startRow: 0, endRow: Math.min(6, totalRows) });
-      return undefined;
-    }
-
-    let rafId = 0;
-
-    function compute() {
-      const scrollTop = root.scrollTop || 0;
-      const viewportHeight = root.clientHeight || 800;
-      const effectiveRowHeight = rowHeight + gap;
-
-      if (effectiveRowHeight <= 0) {
-        setRange({ startRow: 0, endRow: totalRows });
-        return;
-      }
-
-      const overscanTop = Math.max(0, scrollTop - OVERSCAN_PX);
-      const overscanBottom = scrollTop + viewportHeight + OVERSCAN_PX;
-
-      const startRow = Math.max(0, Math.floor(overscanTop / effectiveRowHeight));
-      const endRow = Math.min(totalRows, Math.ceil(overscanBottom / effectiveRowHeight));
-
-      setRange((prev) => {
-        if (prev.startRow === startRow && prev.endRow === endRow) return prev;
-        return { startRow, endRow };
-      });
-    }
-
-    compute();
-
-    function onScroll() {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(compute);
-    }
-
-    root.addEventListener('scroll', onScroll, { passive: true });
-
-    const resizeObserver = new ResizeObserver(() => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(compute);
-    });
-    resizeObserver.observe(root);
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      root.removeEventListener('scroll', onScroll);
-      resizeObserver.disconnect();
-    };
-  }, [scrollRoot, totalRows, rowHeight, gap]);
-
-  const startIndex = range.startRow * columns;
-  const endIndex = Math.min(totalItems, range.endRow * columns);
-
-  const topPadding = range.startRow * (rowHeight + gap);
-  const bottomRows = Math.max(0, totalRows - range.endRow);
-  const bottomPadding = bottomRows * (rowHeight + gap);
-
-  return { startIndex, endIndex, topPadding, bottomPadding, totalHeight };
-}
-
 function MangaGridStable({
   mangas,
   progressive = false,
@@ -249,9 +108,6 @@ function MangaGridStable({
   onToggleFavorite,
   onContextMenu
 }) {
-  const shellRef = useRef(null);
-  const scrollRootRef = useRef(null);
-  const [scrollRoot, setScrollRoot] = useState(null);
   const hydrationTimerRef = useRef(0);
   const hydrationLoadingRef = useRef(new Set());
   const total = mangas.length;
@@ -261,15 +117,7 @@ function MangaGridStable({
   const stableToggleFav = useCallback((id) => onToggleFavorite(id), [onToggleFavorite]);
   const stableContextMenu = useCallback((e, d) => onContextMenu(e, d), [onContextMenu]);
 
-  const layout = useGridLayout(shellRef);
-
   const [hydrationVersion, setHydrationVersion] = useState(0);
-
-  useLayoutEffect(() => {
-    const root = findScrollRoot(shellRef.current);
-    scrollRootRef.current = root;
-    setScrollRoot(root);
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -278,47 +126,36 @@ function MangaGridStable({
     };
   }, []);
 
-  const { startIndex, endIndex, topPadding, bottomPadding } = useVirtualWindow(
-    scrollRoot,
-    total,
-    layout
-  );
-
-  const visibleMangas = useMemo(() => {
-    const slice = [];
-    for (let i = startIndex; i < endIndex && i < total; i++) {
-      const summary = mangas[i];
+  const allCards = useMemo(() => {
+    return mangas.map((summary) => {
       const hydrated = hydrationCache.get(summary.id);
       if (hydrated) {
         const existing = mergedCardCache.get(summary.id);
         if (existing && existing._src === summary && existing._hyd === hydrated) {
-          slice.push(existing);
-        } else {
-          const merged = {
-            ...summary,
-            ...hydrated,
-            tagIds: hydrated.tagIds || summary.tagIds || [],
-            collectionIds: hydrated.collectionIds || summary.collectionIds || [],
-            resumeChapter: hydrated.resumeChapter || summary.resumeChapter || null,
-            chapterIds: hydrated.chapterIds || summary.chapterIds || [],
-            _src: summary,
-            _hyd: hydrated
-          };
-          mergedCardCache.set(summary.id, merged);
-          slice.push(merged);
+          return existing;
         }
-      } else {
-        slice.push(summary);
+        const merged = {
+          ...summary,
+          ...hydrated,
+          tagIds: hydrated.tagIds || summary.tagIds || [],
+          collectionIds: hydrated.collectionIds || summary.collectionIds || [],
+          resumeChapter: hydrated.resumeChapter || summary.resumeChapter || null,
+          chapterIds: hydrated.chapterIds || summary.chapterIds || [],
+          _src: summary,
+          _hyd: hydrated
+        };
+        mergedCardCache.set(summary.id, merged);
+        return merged;
       }
-    }
-    return slice;
-  }, [mangas, startIndex, endIndex, total, hydrationVersion]);
+      return summary;
+    });
+  }, [mangas, hydrationVersion]);
 
   useEffect(() => {
     if (!window.mangaAPI?.getMangaCardBatch) return undefined;
 
     const idsToHydrate = [];
-    for (let i = startIndex; i < endIndex && i < total; i++) {
+    for (let i = 0; i < total; i++) {
       const id = mangas[i].id;
       if (!hydrationCache.has(id) && !hydrationLoadingRef.current.has(id)) {
         idsToHydrate.push(id);
@@ -362,7 +199,7 @@ function MangaGridStable({
       cancelled = true;
       window.clearTimeout(hydrationTimerRef.current);
     };
-  }, [startIndex, endIndex, mangas, total]);
+  }, [mangas, total]);
 
   if (total === 0) {
     return (
@@ -374,24 +211,18 @@ function MangaGridStable({
   }
 
   return (
-    <div ref={shellRef} className="manga-grid-stable-shell">
-      {topPadding > 0 && <div style={{ height: topPadding, flexShrink: 0 }} aria-hidden="true" />}
-
-      <div className="manga-grid manga-grid-stable">
-        {visibleMangas.map((manga, i) => (
-          <MangaCard
-            key={manga.id}
-            manga={manga}
-            priority={startIndex + i < 6}
-            onOpenManga={stableOpenManga}
-            onOpenMangaInBackgroundTab={stableOpenBg}
-            onToggleFavorite={stableToggleFav}
-            onContextMenu={stableContextMenu}
-          />
-        ))}
-      </div>
-
-      {bottomPadding > 0 && <div style={{ height: bottomPadding, flexShrink: 0 }} aria-hidden="true" />}
+    <div className="manga-grid manga-grid-stable">
+      {allCards.map((manga, i) => (
+        <MangaCard
+          key={manga.id}
+          manga={manga}
+          priority={i < 8}
+          onOpenManga={stableOpenManga}
+          onOpenMangaInBackgroundTab={stableOpenBg}
+          onToggleFavorite={stableToggleFav}
+          onContextMenu={stableContextMenu}
+        />
+      ))}
     </div>
   );
 }

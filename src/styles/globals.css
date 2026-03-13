@@ -5954,7 +5954,8 @@ body *::-webkit-scrollbar-thumb:hover,
   flex-direction: column;
   overflow: hidden;
   cursor: pointer;
-  contain: layout style paint;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px auto 480px;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 

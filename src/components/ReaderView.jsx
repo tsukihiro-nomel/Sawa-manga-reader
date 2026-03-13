@@ -141,7 +141,7 @@ function ReaderView({
   const singleContainerRef = useRef(null);
   const doubleContainerRef = useRef(null);
   const transitionLockRef = useRef(false);
-  const stagePointerRef = useRef({ x: 0, y: 0, target: null });
+
 
   const safePages = Array.isArray(chapter.pages) ? chapter.pages : [];
   const spreads = useMemo(() => buildDoubleSpreadRanges(safePages.length), [safePages.length]);
@@ -397,23 +397,10 @@ function ReaderView({
     );
   }
 
-  function handleStagePointerDown(event) {
-    stagePointerRef.current = {
-      x: event.clientX,
-      y: event.clientY,
-      target: event.target
-    };
-  }
-
-  function handleStageToggle(event) {
+  function handleStageClick(event) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     if (isUiControl(target)) return;
-
-    const pointer = stagePointerRef.current;
-    const moved = Math.hypot((event.clientX || 0) - (pointer.x || 0), (event.clientY || 0) - (pointer.y || 0)) > 6;
-    if (moved) return;
-
     toggleUiHidden();
   }
 
@@ -442,8 +429,7 @@ function ReaderView({
     <section
       className={`reader-shell ${uiHidden ? 'reader-shell-ui-hidden' : ''} ${navigationDirection === 'rtl' ? 'reader-shell-rtl' : 'reader-shell-ltr'}`}
       onContextMenu={(event) => onContextMenu(event, { type: 'reader', manga, chapter })}
-      onPointerDownCapture={handleStagePointerDown}
-      onPointerUpCapture={handleStageToggle}
+      onClickCapture={handleStageClick}
     >
       <div className="reader-toolbar">
         <div className="reader-toolbar-left">
