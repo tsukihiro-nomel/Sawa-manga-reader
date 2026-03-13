@@ -5,19 +5,8 @@ const OVERSCAN_PX = 600;
 const HYDRATION_BATCH = 8;
 const HYDRATION_DELAY = 80;
 const RESIZE_DEBOUNCE = 120;
-const CACHE_MAX_SIZE = 500;
-
 const hydrationCache = new Map();
-
-function trimCache() {
-  if (hydrationCache.size <= CACHE_MAX_SIZE) return;
-  const excess = hydrationCache.size - CACHE_MAX_SIZE;
-  const keys = hydrationCache.keys();
-  for (let i = 0; i < excess; i++) {
-    const { value } = keys.next();
-    hydrationCache.delete(value);
-  }
-}
+const mergedCardCache = new Map();
 
 function middleMouseDown(event) {
   if (event.button !== 1) return;
@@ -274,14 +263,7 @@ function MangaGridStable({
 
   const layout = useGridLayout(shellRef);
 
-  const [hydratedMap, setHydratedMap] = useState(() => {
-    const initial = {};
-    for (const manga of mangas) {
-      const cached = hydrationCache.get(manga.id);
-      if (cached) initial[manga.id] = cached;
-    }
-    return initial;
-  });
+  const [hydrationVersion, setHydrationVersion] = useState(0);
 
   useLayoutEffect(() => {
     const root = findScrollRoot(shellRef.current);
@@ -306,22 +288,31 @@ function MangaGridStable({
     const slice = [];
     for (let i = startIndex; i < endIndex && i < total; i++) {
       const summary = mangas[i];
-      const cached = hydratedMap[summary.id] || hydrationCache.get(summary.id) || null;
-      if (cached) {
-        slice.push({
-          ...summary,
-          ...cached,
-          tagIds: cached.tagIds || summary.tagIds || [],
-          collectionIds: cached.collectionIds || summary.collectionIds || [],
-          resumeChapter: cached.resumeChapter || summary.resumeChapter || null,
-          chapterIds: cached.chapterIds || summary.chapterIds || []
-        });
+      const hydrated = hydrationCache.get(summary.id);
+      if (hydrated) {
+        const existing = mergedCardCache.get(summary.id);
+        if (existing && existing._src === summary && existing._hyd === hydrated) {
+          slice.push(existing);
+        } else {
+          const merged = {
+            ...summary,
+            ...hydrated,
+            tagIds: hydrated.tagIds || summary.tagIds || [],
+            collectionIds: hydrated.collectionIds || summary.collectionIds || [],
+            resumeChapter: hydrated.resumeChapter || summary.resumeChapter || null,
+            chapterIds: hydrated.chapterIds || summary.chapterIds || [],
+            _src: summary,
+            _hyd: hydrated
+          };
+          mergedCardCache.set(summary.id, merged);
+          slice.push(merged);
+        }
       } else {
         slice.push(summary);
       }
     }
     return slice;
-  }, [mangas, startIndex, endIndex, total, hydratedMap]);
+  }, [mangas, startIndex, endIndex, total, hydrationVersion]);
 
   useEffect(() => {
     if (!window.mangaAPI?.getMangaCardBatch) return undefined;
@@ -348,14 +339,11 @@ function MangaGridStable({
         const result = await window.mangaAPI.getMangaCardBatch(batch);
         if (cancelled || !result?.ok || !Array.isArray(result.mangas)) return;
 
-        const entries = {};
         for (const manga of result.mangas) {
           hydrationCache.set(manga.id, manga);
-          entries[manga.id] = manga;
         }
-        trimCache();
-        if (Object.keys(entries).length) {
-          setHydratedMap((prev) => ({ ...prev, ...entries }));
+        if (result.mangas.length) {
+          setHydrationVersion((v) => v + 1);
         }
       } catch {
         // noop

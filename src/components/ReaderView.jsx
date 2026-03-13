@@ -390,26 +390,10 @@ function ReaderView({
     };
   }, [mode, chapter.id, zoom, safePages.length, autoContinue, nextChapter, previousChapter, onOpenChapter]);
 
-  function isInteractiveStageTarget(target) {
+  function isUiControl(target) {
     return Boolean(
       target.closest('button, select, option, input, textarea, a, [role="button"], label')
-      || target.closest('.reader-toolbar, .reader-bottom-bar, .reader-end-card, .reader-transition-pill')
-      || target.closest('img.reader-page-image, img.reader-page-image-double')
-    );
-  }
-
-  function isStageSurfaceTarget(target) {
-    return Boolean(
-      target.classList.contains('reader-stage')
-      || target.classList.contains('reader-webtoon')
-      || target.classList.contains('reader-webtoon-strip')
-      || target.classList.contains('reader-webtoon-page-image')
-      || target.classList.contains('reader-page-shell')
-      || target.classList.contains('reader-page-shell-double')
-      || target.classList.contains('reader-double-spread-frame')
-      || target.classList.contains('curved-scroll-content')
-      || target.classList.contains('curved-scroll-shell')
-      || target.classList.contains('reader-stage-scroll-shell')
+      || target.closest('.reader-toolbar, .reader-bottom-bar, .reader-end-card, .reader-transition-pill, .reader-chapter-nav')
     );
   }
 
@@ -424,13 +408,12 @@ function ReaderView({
   function handleStageToggle(event) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (isInteractiveStageTarget(target)) return;
+    if (isUiControl(target)) return;
 
     const pointer = stagePointerRef.current;
     const moved = Math.hypot((event.clientX || 0) - (pointer.x || 0), (event.clientY || 0) - (pointer.y || 0)) > 6;
     if (moved) return;
 
-    if (!isStageSurfaceTarget(target) && target !== event.currentTarget) return;
     toggleUiHidden();
   }
 
@@ -514,10 +497,10 @@ function ReaderView({
         </div>
       </div>
 
-      <div className="reader-stage" onPointerDownCapture={handleStagePointerDown} onPointerUpCapture={handleStageToggle}>
+      <div className="reader-stage">
         {mode === 'webtoon' ? (
-          <CurvedScrollArea className="reader-webtoon" shellClassName="reader-stage-scroll-shell" ref={webtoonContainerRef} onPointerDownCapture={handleStagePointerDown} onPointerUpCapture={handleStageToggle}>
-            <div className="reader-webtoon-strip" style={webtoonStripStyle} onPointerDownCapture={handleStagePointerDown} onPointerUpCapture={handleStageToggle}>
+          <CurvedScrollArea className="reader-webtoon" shellClassName="reader-stage-scroll-shell" ref={webtoonContainerRef}>
+            <div className="reader-webtoon-strip" style={webtoonStripStyle}>
               {safePages.map((page, index) => (
                 <img
                   key={page.id}
@@ -533,8 +516,8 @@ function ReaderView({
             </div>
           </CurvedScrollArea>
         ) : mode === 'double' ? (
-          <CurvedScrollArea className={`reader-page-shell reader-page-shell-double ${doublePageIndexes.length === 1 ? 'reader-page-shell-double-single' : ''}`} shellClassName="reader-stage-scroll-shell" ref={doubleContainerRef} onPointerDownCapture={handleStagePointerDown} onPointerUpCapture={handleStageToggle}>
-            <div className="reader-double-spread-frame" style={doubleFrameStyle} onPointerDownCapture={handleStagePointerDown} onPointerUpCapture={handleStageToggle}>
+          <CurvedScrollArea className={`reader-page-shell reader-page-shell-double ${doublePageIndexes.length === 1 ? 'reader-page-shell-double-single' : ''}`} shellClassName="reader-stage-scroll-shell" ref={doubleContainerRef}>
+            <div className="reader-double-spread-frame" style={doubleFrameStyle}>
               {doublePageIndexes.map((pageIndex) => {
                 const page = safePages[pageIndex];
                 if (!page) return null;
@@ -545,7 +528,6 @@ function ReaderView({
                     alt={`Page ${pageIndex + 1}`}
                     style={doubleImageStyle}
                     className="reader-page-image reader-page-image-double"
-                    onClick={(event) => event.stopPropagation()}
                     loading="eager"
                     decoding="async"
                   />
@@ -554,8 +536,8 @@ function ReaderView({
             </div>
           </CurvedScrollArea>
         ) : (
-          <CurvedScrollArea className="reader-page-shell" shellClassName="reader-stage-scroll-shell" ref={singleContainerRef} onPointerDownCapture={handleStagePointerDown} onPointerUpCapture={handleStageToggle}>
-            <img src={safePages[currentPageIndex]?.src} alt={`Page ${currentPageIndex + 1}`} style={singleImageStyle} className="reader-page-image" onClick={(event) => event.stopPropagation()} loading="eager" decoding="async" />
+          <CurvedScrollArea className="reader-page-shell" shellClassName="reader-stage-scroll-shell" ref={singleContainerRef}>
+            <img src={safePages[currentPageIndex]?.src} alt={`Page ${currentPageIndex + 1}`} style={singleImageStyle} className="reader-page-image" loading="eager" decoding="async" />
           </CurvedScrollArea>
         )}
 
