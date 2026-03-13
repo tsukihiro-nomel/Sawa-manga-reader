@@ -5956,7 +5956,6 @@ body *::-webkit-scrollbar-thumb:hover,
   cursor: pointer;
   content-visibility: auto;
   contain-intrinsic-size: auto 300px auto 480px;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
 .library-view .manga-card-pending,
@@ -5968,6 +5967,7 @@ body *::-webkit-scrollbar-thumb:hover,
 .library-view .manga-card-stable:focus-within,
 .library-view-dashboard .manga-card-stable:hover,
 .library-view-dashboard .manga-card-stable:focus-within {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   box-shadow: 0 18px 34px rgba(0, 0, 0, 0.22);
 }

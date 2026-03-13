@@ -141,6 +141,7 @@ function ReaderView({
   const singleContainerRef = useRef(null);
   const doubleContainerRef = useRef(null);
   const transitionLockRef = useRef(false);
+  const shellRef = useRef(null);
 
 
   const safePages = Array.isArray(chapter.pages) ? chapter.pages : [];
@@ -390,19 +391,21 @@ function ReaderView({
     };
   }, [mode, chapter.id, zoom, safePages.length, autoContinue, nextChapter, previousChapter, onOpenChapter]);
 
-  function isUiControl(target) {
-    return Boolean(
-      target.closest('button, select, option, input, textarea, a, [role="button"], label')
-      || target.closest('.reader-toolbar, .reader-bottom-bar, .reader-end-card, .reader-transition-pill, .reader-chapter-nav')
-    );
-  }
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return undefined;
 
-  function handleStageClick(event) {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
-    if (isUiControl(target)) return;
-    toggleUiHidden();
-  }
+    function handleToggleClick(event) {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.closest('button, select, option, input, textarea, a, [role="button"], label')) return;
+      if (target.closest('.reader-toolbar, .reader-bottom-bar, .reader-end-card, .reader-transition-pill, .reader-chapter-nav')) return;
+      setUiHidden((v) => !v);
+    }
+
+    shell.addEventListener('click', handleToggleClick, true);
+    return () => shell.removeEventListener('click', handleToggleClick, true);
+  }, []);
 
   const zoomPercent = `${Math.round(zoom * 100)}%`;
   const singleImageStyle = buildSinglePageStyle(fitMode, zoom);
@@ -427,9 +430,9 @@ function ReaderView({
 
   return (
     <section
+      ref={shellRef}
       className={`reader-shell ${uiHidden ? 'reader-shell-ui-hidden' : ''} ${navigationDirection === 'rtl' ? 'reader-shell-rtl' : 'reader-shell-ltr'}`}
       onContextMenu={(event) => onContextMenu(event, { type: 'reader', manga, chapter })}
-      onClickCapture={handleStageClick}
     >
       <div className="reader-toolbar">
         <div className="reader-toolbar-left">

@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HeartIcon } from './Icons.jsx';
 
-const HYDRATION_BATCH = 12;
-const HYDRATION_DELAY = 60;
+const HYDRATION_BATCH = 20;
+const HYDRATION_DELAY = 40;
 const hydrationCache = new Map();
 const mergedCardCache = new Map();
 
@@ -166,10 +166,12 @@ function MangaGridStable({
 
     let cancelled = false;
     const queue = [...idsToHydrate];
+    let pendingCount = 0;
 
     async function flushBatch() {
       if (cancelled || !queue.length) return;
       const batch = queue.splice(0, HYDRATION_BATCH);
+      pendingCount++;
       batch.forEach((id) => hydrationLoadingRef.current.add(id));
 
       try {
@@ -179,17 +181,17 @@ function MangaGridStable({
         for (const manga of result.mangas) {
           hydrationCache.set(manga.id, manga);
         }
-        if (result.mangas.length) {
-          setHydrationVersion((v) => v + 1);
-        }
       } catch {
         // noop
       } finally {
         batch.forEach((id) => hydrationLoadingRef.current.delete(id));
+        pendingCount--;
       }
 
       if (!cancelled && queue.length) {
         hydrationTimerRef.current = window.setTimeout(flushBatch, HYDRATION_DELAY);
+      } else if (!cancelled && pendingCount === 0) {
+        setHydrationVersion((v) => v + 1);
       }
     }
 
