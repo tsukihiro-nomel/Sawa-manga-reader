@@ -1,5 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { buildDoubleSpreadRanges } from '../utils/reader.js';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { buildDoubleSpreadRanges, buildMangaJPSpreadRanges } from '../utils/reader.js';
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -14,6 +14,7 @@ import {
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.1;
+const AUTO_HIDE_DELAY = 3000;
 
 function clampZoom(value) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
@@ -34,10 +35,15 @@ function ReaderView({
   const [currentPageIndex, setCurrentPageIndex] = useState(initialPageIndex || 0);
   const [zoom, setZoom] = useState(1);
   const [uiHidden, setUiHidden] = useState(false);
+  const [fitMode, setFitMode] = useState('fit-width');
   const webtoonContainerRef = useRef(null);
+  const autoHideTimerRef = useRef(null);
+  const preloadedPagesRef = useRef(null);
+  const preloadedChapterIdRef = useRef(null);
 
   const safePages = Array.isArray(chapter.pages) ? chapter.pages : [];
   const spreads = useMemo(() => buildDoubleSpreadRanges(safePages.length), [safePages.length]);
+  const mangaJPSpreads = useMemo(() => buildMangaJPSpreadRanges(safePages.length), [safePages.length]);
   const chapterIndex = useMemo(() => chapters.findIndex((item) => item.id === chapter.id), [chapters, chapter.id]);
   const previousChapter = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
   const nextChapter = chapterIndex >= 0 && chapterIndex < chapters.length - 1 ? chapters[chapterIndex + 1] : null;
@@ -47,6 +53,16 @@ function ReaderView({
     const normalizedStart = currentPageIndex % 2 === 0 ? currentPageIndex - 1 : currentPageIndex;
     return spreads.findIndex((range) => range.start === normalizedStart);
   }, [currentPageIndex, spreads]);
+
+  const currentMangaJPSpreadIndex = useMemo(() => {
+    if (currentPageIndex === 0) return 0;
+    const normalizedStart = currentPageIndex % 2 === 0 ? currentPageIndex - 1 : currentPageIndex;
+    return mangaJPSpreads.findIndex((range) => range.start === normalizedStart);
+  }, [currentPageIndex, mangaJPSpreads]);
+
+  const chaptersReadCount = useMemo(() => {
+    return chapters.filter((ch) => ch.isRead).length;
+  }, [chapters]);
 
   useEffect(() => {
     setMode(preferredMode || 'single');
@@ -59,6 +75,52 @@ function ReaderView({
   useEffect(() => {
     setZoom(1);
     setUiHidden(false);
+  }, [chapter.id]);
+
+  // Auto-hide UI after 3 seconds of mouse inactivity
+  const resetAutoHideTimer = useCallback(() => {
+    if (autoHideTimerRef.current) {
+      clearTimeout(autoHideTimerRef.current);
+    }
+    setUiHidden(false);
+    autoHideTimerRef.current = setTimeout(() => {
+      setUiHidden(true);
+    }, AUTO_HIDE_DELAY);
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = () => {
+      resetAutoHideTimer();
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      if (autoHideTimerRef.current) {
+        clearTimeout(autoHideTimerRef.current);
+      }
+    };
+  }, [resetAutoHideTimer]);
+
+  // Chapter preloading: preload next chapter pages when within last 3 pages
+  useEffect(() => {
+    if (!nextChapter || !safePages.length) return;
+    const pagesRemaining = safePages.length - 1 - currentPageIndex;
+    if (pagesRemaining <= 3 && preloadedChapterIdRef.current !== nextChapter.id) {
+      preloadedChapterIdRef.current = nextChapter.id;
+      window.mangaAPI.getChapterPages(nextChapter.path).then((pages) => {
+        preloadedPagesRef.current = pages;
+      }).catch(() => {
+        // Silently fail preloading
+        preloadedPagesRef.current = null;
+      });
+    }
+  }, [currentPageIndex, safePages.length, nextChapter]);
+
+  // Reset preloaded pages when chapter changes
+  useEffect(() => {
+    preloadedPagesRef.current = null;
+    preloadedChapterIdRef.current = null;
   }, [chapter.id]);
 
   const increaseZoom = () => setZoom((value) => clampZoom(value + ZOOM_STEP));
@@ -154,12 +216,22 @@ function ReaderView({
       if (nextSpread) setCurrentPageIndex(nextSpread.start);
       return;
     }
+    if (mode === 'manga-jp') {
+      const nextSpread = mangaJPSpreads[Math.min(currentMangaJPSpreadIndex + 1, mangaJPSpreads.length - 1)];
+      if (nextSpread) setCurrentPageIndex(nextSpread.start);
+      return;
+    }
     setCurrentPageIndex((value) => Math.min(value + 1, safePages.length - 1));
   }
 
   function previous() {
     if (mode === 'double') {
       const prevSpread = spreads[Math.max(currentSpreadIndex - 1, 0)];
+      if (prevSpread) setCurrentPageIndex(prevSpread.start);
+      return;
+    }
+    if (mode === 'manga-jp') {
+      const prevSpread = mangaJPSpreads[Math.max(currentMangaJPSpreadIndex - 1, 0)];
       if (prevSpread) setCurrentPageIndex(prevSpread.start);
       return;
     }
@@ -172,8 +244,24 @@ function ReaderView({
     }
   }
 
+  function getSinglePageStyle() {
+    switch (fitMode) {
+      case 'fit-height':
+        return { height: '100%', maxHeight: 'calc(100vh - 200px)' };
+      case 'original':
+        return { transform: `scale(${zoom})`, transformOrigin: 'center top' };
+      case 'fit-width':
+      default:
+        return { width: `${Math.max(55, zoom * 100)}%`, maxWidth: `${980 * zoom}px` };
+    }
+  }
+
   const currentSpread = spreads[currentSpreadIndex] || { start: 0, end: 0 };
+  const currentMangaJPSpread = mangaJPSpreads[currentMangaJPSpreadIndex] || { start: 0, end: 0, isRTL: false };
   const zoomPercent = `${Math.round(zoom * 100)}%`;
+
+  const isAtEndOfChapter = currentPageIndex >= safePages.length - 1;
+  const showEndPanel = isAtEndOfChapter && nextChapter;
 
   if (!safePages.length) {
     return (
@@ -244,10 +332,26 @@ function ReaderView({
             <button className={mode === 'double' ? 'active' : ''} onClick={() => setMode('double')}>
               <LayoutGridIcon size={16} /> 2 pages
             </button>
+            <button className={mode === 'manga-jp' ? 'active' : ''} onClick={() => setMode('manga-jp')}>
+              <LayoutGridIcon size={16} /> Manga JP
+            </button>
             <button className={mode === 'webtoon' ? 'active' : ''} onClick={() => setMode('webtoon')}>
               <ScrollIcon size={16} /> Webtoon
             </button>
           </div>
+          {mode === 'single' && (
+            <div className="reader-fit-switch">
+              <button className={fitMode === 'fit-width' ? 'active' : ''} onClick={() => setFitMode('fit-width')} title="Ajuster à la largeur">
+                Largeur
+              </button>
+              <button className={fitMode === 'fit-height' ? 'active' : ''} onClick={() => setFitMode('fit-height')} title="Ajuster à la hauteur">
+                Hauteur
+              </button>
+              <button className={fitMode === 'original' ? 'active' : ''} onClick={() => setFitMode('original')} title="Taille originale">
+                Original
+              </button>
+            </div>
+          )}
           <div className="reader-zoom-box" title="Zoom lecture">
             <button className="icon-pill" onClick={decreaseZoom} disabled={zoom <= MIN_ZOOM} title="Zoom -">
               <ZoomOutIcon size={16} />
@@ -273,7 +377,7 @@ function ReaderView({
               className="reader-page"
               src={safePages[currentPageIndex]?.src}
               alt={`Page ${currentPageIndex + 1}`}
-              style={{ width: `${Math.max(55, zoom * 100)}%`, maxWidth: `${980 * zoom}px` }}
+              style={getSinglePageStyle()}
               onClick={(event) => event.stopPropagation()}
             />
           </div>
@@ -306,6 +410,41 @@ function ReaderView({
         </div>
       )}
 
+      {mode === 'manga-jp' && (
+        <div className="reader-stage reader-stage-double reader-stage-manga-jp" onClick={handleStageToggle}>
+          <button className="reader-nav reader-nav-left" onClick={(event) => { event.stopPropagation(); previous(); }} disabled={currentMangaJPSpreadIndex <= 0}><ChevronLeftIcon size={20} /></button>
+          <div className="reader-double-wrap" style={{ direction: currentMangaJPSpread.isRTL ? 'rtl' : 'ltr' }} onClick={handleStageToggle}>
+            {currentMangaJPSpread.isRTL && currentMangaJPSpread.end !== currentMangaJPSpread.start ? (
+              <>
+                <img
+                  className="reader-page reader-page-double"
+                  src={safePages[currentMangaJPSpread.end]?.src}
+                  alt={`Page ${currentMangaJPSpread.end + 1}`}
+                  style={{ maxWidth: `${480 * zoom}px` }}
+                  onClick={(event) => event.stopPropagation()}
+                />
+                <img
+                  className="reader-page reader-page-double"
+                  src={safePages[currentMangaJPSpread.start]?.src}
+                  alt={`Page ${currentMangaJPSpread.start + 1}`}
+                  style={{ maxWidth: `${480 * zoom}px` }}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              </>
+            ) : (
+              <img
+                className="reader-page reader-page-double"
+                src={safePages[currentMangaJPSpread.start]?.src}
+                alt={`Page ${currentMangaJPSpread.start + 1}`}
+                style={{ maxWidth: `${480 * zoom}px` }}
+                onClick={(event) => event.stopPropagation()}
+              />
+            )}
+          </div>
+          <button className="reader-nav reader-nav-right" onClick={(event) => { event.stopPropagation(); next(); }} disabled={currentMangaJPSpreadIndex >= mangaJPSpreads.length - 1}><ChevronRightIcon size={20} /></button>
+        </div>
+      )}
+
       {mode === 'webtoon' && (
         <div className="webtoon-stage" ref={webtoonContainerRef} onClick={handleStageToggle}>
           {safePages.map((page) => (
@@ -323,10 +462,25 @@ function ReaderView({
         </div>
       )}
 
+      {showEndPanel && (
+        <div className="reader-end-panel">
+          <h2>Chapitre terminé !</h2>
+          <p>{chaptersReadCount}/{chapters.length} chapitres lus</p>
+          <div className="reader-end-panel-actions">
+            <button className="primary-button" onClick={() => onOpenChapter?.(nextChapter.id)}>
+              Chapitre suivant
+            </button>
+            <button className="ghost-button" onClick={onExit}>
+              Retour à la fiche manga
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="reader-statusbar">
         <span>Page {currentPageIndex + 1} / {chapter.pageCount}</span>
-        <span>Mode: {mode === 'single' ? 'page simple' : mode === 'double' ? 'double page' : 'scroll webtoon'}</span>
-        <span>{zoomPercent} · + / - / 0 pour le zoom · F pour plein écran · H pour masquer l’UI · Ctrl + ← / → pour changer de chapitre</span>
+        <span>Mode: {mode === 'single' ? 'page simple' : mode === 'double' ? 'double page' : mode === 'manga-jp' ? 'manga JP' : 'scroll webtoon'}</span>
+        <span>{zoomPercent} · + / - / 0 pour le zoom · F pour plein écran · H pour masquer l'UI · Ctrl + ← / → pour changer de chapitre</span>
       </div>
     </section>
   );

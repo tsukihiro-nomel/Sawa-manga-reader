@@ -9,6 +9,9 @@ import ChapterPreviewView from './components/ChapterPreviewView.jsx';
 import ReaderView from './components/ReaderView.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
+import Dashboard from './components/Dashboard.jsx';
+import CollectionsView from './components/CollectionsView.jsx';
+import TagManagerModal from './components/TagManagerModal.jsx';
 import {
   ChevronLeftIcon,
   BookIcon,
@@ -24,6 +27,8 @@ import {
   SearchIcon,
   SettingsIcon,
   SparklesIcon,
+  TagIcon,
+  LayersIcon,
   TrashIcon
 } from './components/Icons.jsx';
 import { sortMangas } from './utils/reader.js';
@@ -98,11 +103,11 @@ function chapterTargetView(ui, mangaId, chapterId, pageIndex = 0) {
     : { screen: 'reader', mangaId, chapterId, pageIndex };
 }
 
-function makeViewScrollKey(tabId, view, activeShelf = 'library', selectedCategoryId = null) {
+function makeViewScrollKey(tabId, view, activeScreen = 'library', selectedCategoryId = null) {
   const screen = view?.screen || 'library';
   const mangaId = view?.mangaId || 'none';
   const chapterId = view?.chapterId || 'none';
-  return `${tabId}:${screen}:${mangaId}:${chapterId}:${activeShelf}:${selectedCategoryId ?? 'all'}`;
+  return `${tabId}:${screen}:${mangaId}:${chapterId}:${activeScreen}:${selectedCategoryId ?? 'all'}`;
 }
 
 function normalizeThemeName(theme) {
@@ -149,10 +154,11 @@ export default function App() {
   const [payload, setPayload] = useState(null);
   const [tabs, setTabs] = useState([INITIAL_TAB]);
   const [activeTabId, setActiveTabId] = useState(INITIAL_TAB.id);
-  const [activeShelf, setActiveShelf] = useState('library');
+  const [activeScreen, setActiveScreen] = useState('library');
   const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingMetadata, setEditingMetadata] = useState(null);
+  const [tagManagerManga, setTagManagerManga] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [chapterPagesCache, setChapterPagesCache] = useState({});
   const [bootError, setBootError] = useState('');
@@ -224,7 +230,7 @@ export default function App() {
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? INITIAL_TAB;
   const activeView = getTabView(activeTab);
-  const activeScrollKey = useMemo(() => makeViewScrollKey(activeTab?.id || 'tab', activeView, activeShelf, selectedCategoryId), [activeTab?.id, activeView, activeShelf, selectedCategoryId]);
+  const activeScrollKey = useMemo(() => makeViewScrollKey(activeTab?.id || 'tab', activeView, activeScreen, selectedCategoryId), [activeTab?.id, activeView, activeScreen, selectedCategoryId]);
   const activeInitialScrollTop = scrollPositionsRef.current[activeScrollKey] ?? 0;
   const captureCurrentViewScroll = useCallback(() => {
     const currentScrollable = document.querySelector('.library-view, .detail-view, .preview-view');
@@ -234,8 +240,8 @@ export default function App() {
   }, [activeScrollKey]);
 
   const baseMangas = useMemo(() => {
-    if (activeShelf === 'favorites') return library.favorites;
-    if (activeShelf === 'recents') {
+    if (activeScreen === 'favorites') return library.favorites;
+    if (activeScreen === 'recents') {
       const seen = new Set();
       return library.recents
         .map((recent) => findManga(library, recent.mangaId))
@@ -246,7 +252,7 @@ export default function App() {
         });
     }
     return library.allMangas;
-  }, [activeShelf, library]);
+  }, [activeScreen, library]);
 
   const filteredMangas = useMemo(() => {
     const lowered = search.trim().toLowerCase();
@@ -308,11 +314,18 @@ export default function App() {
         : null;
 
       if (view.screen === 'library') {
+        const screenLabels = {
+          dashboard: 'Dashboard',
+          library: 'Bibliothèque',
+          collections: 'Collections',
+          favorites: 'Favoris',
+          recents: 'Récents'
+        };
         return {
           id: tab.id,
           kind: 'library',
-          label: activeShelf === 'favorites' ? 'Favoris' : activeShelf === 'recents' ? 'Récents' : 'Bibliothèque',
-          subtitle: selectedCategory?.name ?? 'Toute la bibliothèque'
+          label: screenLabels[activeScreen] || 'Bibliothèque',
+          subtitle: activeScreen === 'dashboard' ? 'Vue d\'ensemble' : activeScreen === 'collections' ? 'Tes collections' : selectedCategory?.name ?? 'Toute la bibliothèque'
         };
       }
 
@@ -341,7 +354,7 @@ export default function App() {
         subtitle: chapter?.name ?? 'Mode lecture'
       };
     });
-  }, [tabs, library, activeShelf, selectedCategory]);
+  }, [tabs, library, activeScreen, selectedCategory]);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
@@ -604,6 +617,26 @@ export default function App() {
     await refreshWith(window.mangaAPI.pickCover(mangaId));
   }
 
+  async function handleCreateTag(name, color) {
+    await refreshWith(window.mangaAPI.createTag(name, color));
+  }
+
+  async function handleDeleteTag(tagId) {
+    await refreshWith(window.mangaAPI.deleteTag(tagId));
+  }
+
+  async function handleToggleTag(mangaId, tagId) {
+    await refreshWith(window.mangaAPI.toggleMangaTag(mangaId, tagId));
+  }
+
+  async function handleAddToCollection(mangaId, collectionId) {
+    await refreshWith(window.mangaAPI.addToCollection(collectionId, mangaId));
+  }
+
+  async function handleCreateCollection(name, description) {
+    await refreshWith(window.mangaAPI.createCollection(name, description));
+  }
+
   async function handleUpdateSettings(patch) {
     await refreshWith(window.mangaAPI.updateSettings(patch));
   }
@@ -730,6 +763,7 @@ export default function App() {
           icon: <TrashIcon size={14} />,
           danger: true
         }),
+        actionItem('Gérer les tags', () => setTagManagerManga(context.manga), { icon: <TagIcon size={14} /> }),
         actionItem('Éditer les métadonnées', () => setEditingMetadata(context.manga), { icon: <EditIcon size={14} /> }),
         actionItem('Choisir une couverture', () => handlePickCover(context.manga.id), { icon: <SparklesIcon size={14} /> }),
         actionItem('Supprimer le manga (corbeille)', () => handleTrashManga(context.manga.id), { icon: <TrashIcon size={14} />, danger: true })
@@ -841,8 +875,8 @@ export default function App() {
         <Sidebar
           collapsed={ui.sidebarCollapsed}
           onToggleCollapsed={toggleSidebarCollapsed}
-          activeShelf={activeShelf}
-          onShelfChange={setActiveShelf}
+          activeScreen={activeScreen}
+          onScreenChange={setActiveScreen}
           categories={visibleCategories}
           allCategories={library.categories}
           selectedCategoryId={selectedCategoryId}
@@ -853,10 +887,11 @@ export default function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           showHiddenCategories={ui.showHiddenCategories}
           onContextMenu={openContextMenu}
+          favoritesCount={library.favorites?.length ?? 0}
         />
 
         <div className="content-shell">
-          {activeView.screen === 'library' && (
+          {activeView.screen === 'library' && activeScreen !== 'dashboard' && activeScreen !== 'collections' && (
             <TopBar
               sidebarCollapsed={ui.sidebarCollapsed}
               onToggleSidebar={toggleSidebarCollapsed}
@@ -868,14 +903,40 @@ export default function App() {
               onClearCategory={() => handleSelectCategory(null)}
               onOpenSettings={() => setSettingsOpen(true)}
               onAddCategories={handleOpenAddCategories}
-              activeShelf={activeShelf}
+              activeScreen={activeScreen}
             />
           )}
 
-          {activeView.screen === 'library' && (
+          {activeView.screen === 'library' && activeScreen === 'dashboard' && (
+            <Dashboard
+              allMangas={library.allMangas}
+              favorites={library.favorites}
+              persisted={payload?.persisted ?? {}}
+              onOpenManga={openMangaInCurrentTab}
+              onNavigateTo={(target) => {
+                if (target === 'library') {
+                  setActiveScreen('library');
+                } else {
+                  setActiveScreen('library');
+                }
+              }}
+              onContextMenu={openContextMenu}
+            />
+          )}
+
+          {activeView.screen === 'library' && activeScreen === 'collections' && (
+            <CollectionsView
+              allMangas={library.allMangas}
+              persisted={payload?.persisted ?? {}}
+              onOpenManga={openMangaInCurrentTab}
+              onContextMenu={openContextMenu}
+            />
+          )}
+
+          {activeView.screen === 'library' && activeScreen !== 'dashboard' && activeScreen !== 'collections' && (
             <LibraryView
               mangas={filteredMangas}
-              activeShelf={activeShelf}
+              activeScreen={activeScreen}
               categories={visibleCategories}
               initialScrollTop={activeInitialScrollTop}
               onScrollPositionChange={handleViewScrollPositionChange}
@@ -891,6 +952,8 @@ export default function App() {
           {activeView.screen === 'manga' && currentManga && (
             <MangaDetailView
               manga={currentManga}
+              allTags={payload?.persisted?.tags ?? {}}
+              allCollections={Object.values(payload?.persisted?.collections ?? {})}
               initialScrollTop={activeInitialScrollTop}
               onScrollPositionChange={handleViewScrollPositionChange}
               onBack={popActiveView}
@@ -900,6 +963,8 @@ export default function App() {
               onToggleFavorite={handleToggleFavorite}
               onPickCover={handlePickCover}
               onOpenMetadataEditor={() => setEditingMetadata(currentManga)}
+              onAddTag={(mangaId) => setTagManagerManga(currentManga)}
+              onAddToCollection={(mangaId) => {}}
               onContextMenu={openContextMenu}
             />
           )}
@@ -977,6 +1042,17 @@ export default function App() {
           manga={editingMetadata}
           onClose={() => setEditingMetadata(null)}
           onSave={handleSaveMetadata}
+        />
+      )}
+
+      {tagManagerManga && (
+        <TagManagerModal
+          manga={tagManagerManga}
+          allTags={payload?.persisted?.tags ?? {}}
+          onToggleTag={handleToggleTag}
+          onCreateTag={handleCreateTag}
+          onDeleteTag={handleDeleteTag}
+          onClose={() => setTagManagerManga(null)}
         />
       )}
 
