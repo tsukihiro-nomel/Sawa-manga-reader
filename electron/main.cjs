@@ -10,6 +10,7 @@ const {
   dialog,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   net,
   protocol,
@@ -34,7 +35,8 @@ const {
   updateCollection,
   addMangaToCollection,
   removeMangaFromCollection,
-  getThumbnailDir
+  getThumbnailDir,
+  getUserDataPath
 } = require('./services/storage.cjs');
 
 const {
@@ -45,6 +47,66 @@ const {
 } = require('./services/libraryScanner.cjs');
 
 const { LibraryWatcher } = require('./services/watcher.cjs');
+
+/* ------------------------------------------------------------------ */
+/*  Color extraction from image buffer                                 */
+/* ------------------------------------------------------------------ */
+
+function extractDominantColors(imgBuffer) {
+  try {
+    const img = nativeImage.createFromBuffer(imgBuffer);
+    if (img.isEmpty()) return null;
+    // Resize to small for fast sampling
+    const small = img.resize({ width: 64, height: 64, quality: 'low' });
+    const bmp = small.toBitmap();
+    const w = small.getSize().width;
+    const h = small.getSize().height;
+
+    // Sample pixels, group by hue buckets
+    const buckets = new Array(12).fill(null).map(() => ({ r: 0, g: 0, b: 0, count: 0, satSum: 0 }));
+    for (let i = 0; i < bmp.length; i += 4) {
+      const r = bmp[i], g = bmp[i + 1], b = bmp[i + 2];
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const delta = max - min;
+      const lightness = (max + min) / 510;
+      if (delta < 20 || lightness < 0.08 || lightness > 0.92) continue; // skip grays
+      const sat = delta / (max || 1);
+      let hue = 0;
+      if (delta > 0) {
+        if (max === r) hue = ((g - b) / delta) % 6;
+        else if (max === g) hue = (b - r) / delta + 2;
+        else hue = (r - g) / delta + 4;
+        hue = ((hue * 60) + 360) % 360;
+      }
+      const bucket = Math.floor(hue / 30) % 12;
+      buckets[bucket].r += r;
+      buckets[bucket].g += g;
+      buckets[bucket].b += b;
+      buckets[bucket].count += 1;
+      buckets[bucket].satSum += sat;
+    }
+
+    // Sort by weighted score (count * avg saturation)
+    const scored = buckets
+      .filter(b => b.count > 0)
+      .map(b => ({
+        r: Math.round(b.r / b.count),
+        g: Math.round(b.g / b.count),
+        b: Math.round(b.b / b.count),
+        score: b.count * (b.satSum / b.count)
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length === 0) return null;
+
+    const toHex = (c) => `#${c.r.toString(16).padStart(2, '0')}${c.g.toString(16).padStart(2, '0')}${c.b.toString(16).padStart(2, '0')}`;
+    const accent = toHex(scored[0]);
+    const accentAlt = scored.length > 1 ? toHex(scored[1]) : accent;
+    return { accent, accentAlt };
+  } catch (_) {
+    return null;
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Globals                                                           */
@@ -861,6 +923,84 @@ ipcMain.handle('ui:updateSettings', async (_event, patch) => {
     };
     return state;
   });
+  return buildStatePayload();
+});
+
+ipcMain.handle('ui:pickBackgroundImage', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choisir une image de fond',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'avif'] }]
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return buildStatePayload();
+  }
+
+  const sourcePath = result.filePaths[0];
+  const udp = getUserDataPath();
+  const ext = (path.extname(sourcePath) || '.jpg').toLowerCase();
+  const destPath = path.join(udp, `sawa-background${ext}`);
+
+  // Remove any previous background image
+  try {
+    for (const f of fs.readdirSync(udp)) {
+      if (f.startsWith('sawa-background')) {
+        const fp = path.join(udp, f);
+        if (fp !== destPath) try { fs.unlinkSync(fp); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
+  try {
+    fs.copyFileSync(sourcePath, destPath);
+  } catch (_) {
+    // Fall back to source path
+  }
+
+  const finalPath = fs.existsSync(destPath) ? destPath : sourcePath;
+
+  // Read a small version of the image to extract dominant colors
+  let extractedColors = null;
+  try {
+    const imgBuffer = fs.readFileSync(finalPath);
+    extractedColors = extractDominantColors(imgBuffer);
+  } catch (_) {}
+
+  updateState((state) => {
+    state.ui = {
+      ...state.ui,
+      backgroundImage: finalPath,
+      backgroundOpacity: state.ui.backgroundOpacity ?? 0.15,
+    };
+    if (extractedColors) {
+      state.ui.backgroundAccent = extractedColors.accent;
+      state.ui.backgroundAccentAlt = extractedColors.accentAlt;
+    }
+    return state;
+  });
+
+  return buildStatePayload();
+});
+
+ipcMain.handle('ui:removeBackgroundImage', async () => {
+  const udp = getUserDataPath();
+  try {
+    for (const f of fs.readdirSync(udp)) {
+      if (f.startsWith('sawa-background')) {
+        try { fs.unlinkSync(path.join(udp, f)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
+  updateState((state) => {
+    delete state.ui.backgroundImage;
+    delete state.ui.backgroundOpacity;
+    delete state.ui.backgroundAccent;
+    delete state.ui.backgroundAccentAlt;
+    return state;
+  });
+
   return buildStatePayload();
 });
 

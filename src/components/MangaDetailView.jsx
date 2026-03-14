@@ -414,13 +414,10 @@ function MangaDetailView({
                 </button>
               )}
             </h3>
-            {(manga.tags?.length > 0 || manga.onlineGenres?.length > 0) ? (
+            {manga.tags?.length > 0 ? (
               <div className="detail-tag-pills">
-                {manga.tags?.map((tag) => (
+                {manga.tags.map((tag) => (
                   <span key={tag.id} className="manga-tag-pill" style={{ '--tag-color': tag.color }}>{tag.name}</span>
-                ))}
-                {manga.onlineGenres?.filter((g) => !manga.tags?.some((t) => t.name.toLowerCase() === g.toLowerCase())).map((genre) => (
-                  <span key={genre} className="manga-tag-pill manga-tag-pill-genre">{genre}</span>
                 ))}
               </div>
             ) : (

@@ -326,7 +326,7 @@ function scanManga(mangaPath, persistedState) {
     categoryName: null,
     categoryHidden: false,
     tags,
-    onlineGenres: Array.isArray(metadata.onlineGenres) ? metadata.onlineGenres : [],
+    // onlineGenres removed — genres are now unified into the tags system
     collectionIds,
     hasNewChapters
   };
