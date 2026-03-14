@@ -1,75 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ChevronLeftIcon, ChevronRightIcon, HeartIcon } from './Icons.jsx';
-
-// ---------------------------------------------------------------------------
-// Manga Card (memoized, lightweight)
-// ---------------------------------------------------------------------------
-
-const MangaCard = memo(function MangaCard({
-  manga,
-  onOpen,
-  onOpenBackground,
-  onToggleFavorite,
-  onContextMenu
-}) {
-  const handleClick = useCallback(() => onOpen(manga.id), [manga.id, onOpen]);
-  const handleMiddleUp = useCallback((e) => {
-    if (e.button !== 1) return;
-    e.preventDefault();
-    e.stopPropagation();
-    onOpenBackground?.(manga.id);
-  }, [manga.id, onOpenBackground]);
-  const handleMiddleDown = useCallback((e) => { if (e.button === 1) e.preventDefault(); }, []);
-  const handleFav = useCallback((e) => { e.stopPropagation(); onToggleFavorite(manga.id); }, [manga.id, onToggleFavorite]);
-  const handleCtx = useCallback((e) => onContextMenu(e, { type: 'manga', manga }), [manga, onContextMenu]);
-
-  const pct = manga.progressPercent ?? 0;
-  const stateLabel = manga.isRead ? 'Lu' : pct > 0 ? 'En cours' : null;
-
-  return (
-    <article className="manga-card" onClick={handleClick} onMouseDown={handleMiddleDown} onMouseUp={handleMiddleUp} onContextMenu={handleCtx}>
-      <div className="manga-cover-wrap">
-        {manga.coverSrc
-          ? <img className="manga-cover" src={manga.coverSrc} alt={manga.displayTitle} loading="lazy" />
-          : <div className="cover-fallback">{(manga.displayTitle || '?')[0]}</div>
-        }
-        <button
-          className={`favorite-toggle ${manga.isFavorite ? 'favorite-toggle-active' : ''}`}
-          onClick={handleFav}
-          onContextMenu={handleCtx}
-          title={manga.isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-        >
-          <HeartIcon size={16} filled={manga.isFavorite} />
-        </button>
-        {stateLabel && <div className={`manga-card-state ${manga.isRead ? 'manga-card-state-read' : ''}`}>{stateLabel}</div>}
-        {manga.hasNewChapters && <div className="new-chapter-chip">Nouveau</div>}
-        {/* Bottom gradient overlay with progress */}
-        <div className="manga-cover-gradient">
-          {pct > 0 && !manga.isRead && (
-            <div className="manga-cover-progress">
-              <span style={{ width: `${pct}%` }} />
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="manga-card-body">
-        <h3>{manga.displayTitle}</h3>
-        <div className="manga-card-meta">
-          <span>{manga.chapterCount} ch.</span>
-          {manga.author && <span className="manga-card-author">{manga.author}</span>}
-        </div>
-        {manga.tags && manga.tags.length > 0 && (
-          <div className="manga-card-tags">
-            {manga.tags.slice(0, 2).map((t) => (
-              <span key={t.id} className="manga-tag-pill" style={{ '--tag-color': t.color }}>{t.name}</span>
-            ))}
-          </div>
-        )}
-      </div>
-    </article>
-  );
-});
+import { ChevronLeftIcon, ChevronRightIcon } from './Icons.jsx';
+import MangaCard from './MangaCard.jsx';
 
 // ---------------------------------------------------------------------------
 // Hero Carousel (simplified for v2)
@@ -204,31 +136,57 @@ function LibraryView({
     measureElement: (el) => el?.getBoundingClientRect().height ?? ROW_HEIGHT
   });
 
-  // Scroll restoration: one-shot, context-aware
+  // Scroll restoration: multi-attempt with ResizeObserver, user interaction cancels
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el || !initialScrollTop) return;
     restoredRef.current = false;
     savingBlockedRef.current = true;
+    let userInteracted = false;
 
     const apply = () => {
-      if (restoredRef.current) return;
-      if (el.scrollHeight >= initialScrollTop) {
-        el.scrollTop = initialScrollTop;
-        restoredRef.current = true;
-        setTimeout(() => { savingBlockedRef.current = false; }, 100);
+      if (restoredRef.current || userInteracted) return;
+      if (el.scrollHeight >= initialScrollTop + 10) {
+        el.scrollTo({ top: initialScrollTop, behavior: 'auto' });
+        if (Math.abs(el.scrollTop - initialScrollTop) < 5) {
+          restoredRef.current = true;
+          setTimeout(() => { savingBlockedRef.current = false; }, 150);
+        }
       }
     };
 
+    const stopRestoring = () => {
+      userInteracted = true;
+      savingBlockedRef.current = false;
+    };
+
+    const interactionEvents = ['wheel', 'touchstart', 'pointerdown', 'mousedown'];
+    interactionEvents.forEach((evt) => el.addEventListener(evt, stopRestoring, { passive: true }));
+
     apply();
-    const raf = requestAnimationFrame(apply);
-    const t1 = setTimeout(apply, 80);
-    const t2 = setTimeout(() => { apply(); savingBlockedRef.current = false; }, 200);
+    const raf1 = requestAnimationFrame(apply);
+    const raf2 = requestAnimationFrame(() => requestAnimationFrame(apply));
+    const t1 = setTimeout(apply, 50);
+    const t2 = setTimeout(apply, 120);
+    const t3 = setTimeout(apply, 250);
+    const t4 = setTimeout(() => { apply(); savingBlockedRef.current = false; }, 400);
+
+    let observer;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => apply());
+      observer.observe(el);
+      setTimeout(() => observer?.disconnect(), 500);
+    }
 
     return () => {
-      cancelAnimationFrame(raf);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
       clearTimeout(t1);
       clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      observer?.disconnect();
+      interactionEvents.forEach((evt) => el.removeEventListener(evt, stopRestoring));
       savingBlockedRef.current = false;
     };
   }, [scrollKey, initialScrollTop]);

@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from 'react';
 import { resolveSmartCollection } from '../utils/reader.js';
+import MangaCard from './MangaCard.jsx';
 import {
   BookIcon, ChevronLeftIcon, ClockIcon, EditIcon, HeartIcon, ImageIcon, LayersIcon,
   PlayIcon, PlusIcon, SparklesIcon, TagIcon, TrashIcon, ZapIcon
@@ -55,22 +56,24 @@ function CollectionFormModal({ onClose, onSubmit, initial }) {
   );
 }
 
-// ── Collection Detail View (shows mangas inside a collection) ──
-function CollectionDetailView({ collection, mangas, onBack, onOpenManga, onRemoveManga, onEditCollection, onDeleteCollection, onContextMenu }) {
+// ── Collection Detail View (shows manga cards in a grid) ──
+function CollectionDetailView({ collection, mangas, onBack, onOpenManga, onToggleFavorite, onRemoveManga, onEditCollection, onDeleteCollection, onContextMenu }) {
   return (
     <div className="collection-detail">
       <div className="collection-detail-header">
         <button className="ghost-button" onClick={onBack}>
           <ChevronLeftIcon size={16} /> Retour
         </button>
-        <div className="collection-detail-actions">
-          <button className="ghost-button" onClick={onEditCollection} title="Modifier">
-            <EditIcon size={16} />
-          </button>
-          <button className="ghost-button" onClick={onDeleteCollection} title="Supprimer la collection">
-            <TrashIcon size={16} />
-          </button>
-        </div>
+        {!collection.isSmart && (
+          <div className="collection-detail-actions">
+            <button className="ghost-button" onClick={onEditCollection} title="Modifier">
+              <EditIcon size={16} />
+            </button>
+            <button className="ghost-button" onClick={onDeleteCollection} title="Supprimer la collection">
+              <TrashIcon size={16} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="collection-detail-info">
@@ -85,33 +88,15 @@ function CollectionDetailView({ collection, mangas, onBack, onOpenManga, onRemov
           <p>Ajoute des mangas depuis le menu contextuel (clic droit sur un manga).</p>
         </div>
       ) : (
-        <div className="collection-manga-list">
+        <div className="collection-manga-grid">
           {mangas.map((manga) => (
-            <div
+            <MangaCard
               key={manga.id}
-              className="collection-manga-row"
-              onClick={() => onOpenManga(manga.id)}
-              onContextMenu={(e) => onContextMenu?.(e, { type: 'manga', manga })}
-            >
-              <div className="collection-manga-cover">
-                {manga.coverSrc
-                  ? <img src={manga.coverSrc} alt={manga.displayTitle} loading="lazy" />
-                  : <div className="cover-fallback cover-fallback-sm">{(manga.displayTitle || '?')[0]}</div>
-                }
-              </div>
-              <div className="collection-manga-info">
-                <strong>{manga.displayTitle}</strong>
-                <span className="muted-text">{manga.chapterCount} ch. · {manga.progressPercent ?? 0}%</span>
-                {manga.author && <span className="muted-text">{manga.author}</span>}
-              </div>
-              <button
-                className="ghost-button collection-manga-remove"
-                onClick={(e) => { e.stopPropagation(); onRemoveManga(manga.id); }}
-                title="Retirer de la collection"
-              >
-                <TrashIcon size={14} />
-              </button>
-            </div>
+              manga={manga}
+              onOpen={onOpenManga}
+              onToggleFavorite={onToggleFavorite}
+              onContextMenu={onContextMenu}
+            />
           ))}
         </div>
       )}
@@ -155,6 +140,7 @@ function CollectionsView({
   allMangas = [],
   persisted = {},
   onOpenManga,
+  onToggleFavorite,
   onCreateCollection,
   onDeleteCollection,
   onUpdateCollection,
@@ -188,13 +174,11 @@ function CollectionsView({
   // Active collection detail view
   const activeCollection = useMemo(() => {
     if (!activeCollectionId) return null;
-    // Check smart collections first
     const smart = SMART_COLLECTIONS.find((sc) => sc.id === activeCollectionId);
     if (smart) {
       const mangas = resolveSmartCollection(allMangas, smart.id, persisted);
       return { collection: { id: smart.id, name: smart.label, description: smart.description, isSmart: true }, mangas };
     }
-    // Manual collection
     const cols = persisted?.collections ?? {};
     const col = cols[activeCollectionId];
     if (!col) return null;
@@ -212,6 +196,7 @@ function CollectionsView({
           mangas={activeCollection.mangas}
           onBack={() => setActiveCollectionId(null)}
           onOpenManga={onOpenManga}
+          onToggleFavorite={onToggleFavorite}
           onRemoveManga={(mangaId) => {
             if (activeCollection.collection.isSmart) return;
             onRemoveMangaFromCollection?.(activeCollection.collection.id, mangaId);
@@ -268,7 +253,6 @@ function CollectionsView({
 
       {activeTab === 'manual' && (
         <>
-          {/* New Collection button (MDList-style) */}
           <button className="mdlist-new-btn" onClick={() => setShowCreate(true)}>
             <PlusIcon size={18} /> Nouvelle collection
           </button>
