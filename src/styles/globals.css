@@ -1177,7 +1177,12 @@ img { display: block; max-width: 100%; }
 .settings-drawer-backdrop,
 .modal-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
   background: rgba(0, 0, 0, 0.42);
   opacity: 0;
   pointer-events: none;
@@ -1320,7 +1325,6 @@ img { display: block; max-width: 100%; }
 /* ===== Patch 1.1.0 : thèmes, tabs modernisés, hero carousel, light mode refait ===== */
 
 .app-shell {
-  position: relative;
   --app-background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 22%, transparent), transparent 24%),
     radial-gradient(circle at top right, rgba(86, 117, 255, 0.14), transparent 18%),
@@ -1332,17 +1336,12 @@ img { display: block; max-width: 100%; }
 .app-bg-image {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   pointer-events: none;
   transition: opacity 0.4s ease;
-}
-/* Ensure all app content sits above the bg image */
-.app-shell > *:not(.app-bg-image) {
-  position: relative;
-  z-index: 1;
 }
 
 .theme-dark-night {
@@ -3475,13 +3474,13 @@ img { display: block; max-width: 100%; }
 
 /* Context menu z-index above modals */
 .context-menu-layer {
-  z-index: 100;
+  z-index: 10000;
 }
 
-/* Modal z-index */
+/* Modal z-index — ensure modals sit above all content */
 .modal-backdrop,
 .settings-drawer-backdrop {
-  z-index: 90;
+  z-index: 9000;
 }
 
 /* Collections heading */
@@ -4354,9 +4353,8 @@ img { display: block; max-width: 100%; }
 }
 
 /* ===== Premium Manga Card (.mc) ===== */
-/* Reference: cover fully visible (contain), status badge top-left,
-   heart top-right, title, tags row with +N, info line with ◦ separators.
-   All cards uniform height. */
+/* Reference design: rounded card with accent border, cover fills space,
+   status badge top-left, heart top-right, title, tags +N, info line. */
 .mc {
   position: relative;
   display: flex;
@@ -4369,7 +4367,6 @@ img { display: block; max-width: 100%; }
   box-shadow: 0 2px 12px rgba(0,0,0,0.10);
   transition: transform 0.26s cubic-bezier(.22,1,.36,1), box-shadow 0.26s ease, border-color 0.26s ease;
   will-change: transform;
-  contain: layout paint;
 }
 .mc:hover {
   transform: translateY(-5px) scale(1.012);
@@ -4383,22 +4380,19 @@ img { display: block; max-width: 100%; }
   transition-duration: 0.1s;
 }
 
-/* Cover — contain so full image is visible, dark bg fills gaps */
+/* Cover — fills the area, manga covers fit naturally at ~2:3 ratio */
 .mc-cover {
   position: relative;
   width: 100%;
-  aspect-ratio: 0.68;
+  aspect-ratio: 2/3;
   overflow: hidden;
   flex-shrink: 0;
   background: color-mix(in srgb, var(--bg) 85%, var(--accent));
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 .mc-cover img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   display: block;
   transition: transform 0.4s cubic-bezier(.22,1,.36,1);
 }
@@ -4454,7 +4448,7 @@ img { display: block; max-width: 100%; }
   border: 1px solid rgba(255,255,255,0.12);
 }
 .mc-badge-progress {
-  background: color-mix(in srgb, var(--accent) 78%, rgba(0,0,0,0.35));
+  background: rgba(34, 120, 60, 0.88);
 }
 .mc-badge-read {
   background: rgba(16, 185, 129, 0.85);
@@ -4494,13 +4488,14 @@ img { display: block; max-width: 100%; }
   color: #fff;
 }
 
-/* Info section below cover */
+/* Info section below cover — fixed height for uniform cards */
 .mc-info {
   padding: 10px 12px 12px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* Title */
@@ -4526,17 +4521,21 @@ img { display: block; max-width: 100%; }
 }
 .mc-tag {
   display: inline-block;
-  padding: 2px 9px;
+  padding: 3px 10px;
   border-radius: 999px;
-  font-size: 0.64rem;
-  font-weight: 600;
+  font-size: 0.66rem;
+  font-weight: 700;
   white-space: nowrap;
-  color: var(--tc, var(--accent));
-  background: color-mix(in srgb, var(--tc, var(--accent)) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--tc, var(--accent)) 24%, transparent);
+  color: white;
+  background: var(--tc, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--tc, var(--accent)) 80%, rgba(255,255,255,0.2));
+  text-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 .mc-tag-extra {
-  --tc: var(--text-soft);
+  background: color-mix(in srgb, var(--text-soft) 30%, transparent);
+  color: var(--text-soft);
+  border-color: color-mix(in srgb, var(--text-soft) 25%, transparent);
+  text-shadow: none;
   font-weight: 700;
   font-size: 0.62rem;
   padding: 2px 7px;
