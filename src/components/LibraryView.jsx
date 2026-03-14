@@ -216,7 +216,8 @@ function LibraryView({
                 top: 0,
                 left: 0,
                 width: '100%',
-                transform: `translateY(${vRow.start}px)`
+                transform: `translateY(${vRow.start}px)`,
+                '--grid-columns': columns
               }}
             >
               {rows[vRow.index]?.map((manga) => (

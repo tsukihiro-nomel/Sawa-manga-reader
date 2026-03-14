@@ -116,6 +116,7 @@ export function searchMangas(mangas, query) {
       manga.author,
       manga.description,
       manga.name,
+      ...(Array.isArray(manga.aliases) ? manga.aliases : []),
       ...(Array.isArray(manga.tags) ? manga.tags.map((t) => t.name) : []),
     ];
     const haystack = fields.filter(Boolean).join(' ').toLowerCase();

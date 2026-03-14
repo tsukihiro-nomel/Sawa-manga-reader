@@ -280,7 +280,17 @@ export default function App() {
       : byCategory;
 
     return sortMangas(bySearch, ui.sort);
-  }, [baseMangas, search, ui.showHiddenCategories, ui.sort, selectedCategory]);
+  }, [baseMangas, payload?.persisted?.collections, search, ui.showHiddenCategories, ui.sort, selectedCategory]);
+
+  const dashboardMangas = useMemo(
+    () => library.allMangas.filter((manga) => !manga.categoryHidden),
+    [library.allMangas]
+  );
+
+  const dashboardFavorites = useMemo(
+    () => library.favorites.filter((manga) => !manga.categoryHidden),
+    [library.favorites]
+  );
 
   const currentManga = activeView.mangaId ? findManga(library, activeView.mangaId) : null;
   const currentChapterData = activeView.chapterId
@@ -950,8 +960,8 @@ export default function App() {
 
           {activeView.screen === 'library' && activeScreen === 'dashboard' && (
             <Dashboard
-              allMangas={library.allMangas}
-              favorites={library.favorites}
+              allMangas={dashboardMangas}
+              favorites={dashboardFavorites}
               persisted={payload?.persisted ?? {}}
               onOpenManga={openMangaInCurrentTab}
               onToggleFavorite={handleToggleFavorite}
@@ -1246,7 +1256,7 @@ function OnlineMetadataSearchModal({ manga, onImport, onClose }) {
           {results.map((item) => (
             <div key={item.malId} className="online-result-card">
               <div className="online-result-cover">
-                {item.coverUrl ? <img src={item.coverUrl} alt={item.title} /> : <div className="cover-fallback">?</div>}
+                {(item.coverPreviewSrc || item.coverUrl) ? <img src={item.coverPreviewSrc || item.coverUrl} alt={item.title} /> : <div className="cover-fallback">?</div>}
               </div>
               <div className="online-result-info">
                 <strong>{item.title}</strong>
@@ -1280,8 +1290,27 @@ function MetadataEditorModal({ manga, onClose, onSave }) {
   const [form, setForm] = useState({
     title: manga.displayTitle || '',
     author: manga.author || '',
-    description: manga.description || ''
+    description: manga.description || '',
+    aliasesText: Array.isArray(manga.aliases) ? manga.aliases.join('\n') : ''
   });
+
+  const handleSave = () => {
+    const aliases = [...new Map(
+      form.aliasesText
+        .split(/\r?\n|;/)
+        .flatMap((chunk) => chunk.split(','))
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => [value.toLowerCase(), value])
+    ).values()];
+
+    onSave(manga.id, {
+      title: form.title,
+      author: form.author,
+      description: form.description,
+      aliases
+    });
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1296,12 +1325,21 @@ function MetadataEditorModal({ manga, onClose, onSave }) {
           <input value={form.author} onChange={(event) => setForm((prev) => ({ ...prev, author: event.target.value }))} />
         </label>
         <label>
+          Titres alternatifs
+          <textarea
+            rows="4"
+            value={form.aliasesText}
+            placeholder="Un titre par ligne ou séparé par des virgules"
+            onChange={(event) => setForm((prev) => ({ ...prev, aliasesText: event.target.value }))}
+          />
+        </label>
+        <label>
           Description
           <textarea rows="5" value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} />
         </label>
         <div className="modal-actions">
           <button className="ghost-button" onClick={onClose}>Annuler</button>
-          <button className="primary-button" onClick={() => onSave(manga.id, form)}>Enregistrer</button>
+          <button className="primary-button" onClick={handleSave}>Enregistrer</button>
         </div>
       </div>
     </div>

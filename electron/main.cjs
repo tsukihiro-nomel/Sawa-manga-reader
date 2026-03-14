@@ -99,6 +99,7 @@ function createWindow() {
     height: 960,
     minWidth: 1160,
     minHeight: 720,
+    show: false,
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: '#0f1117',
@@ -119,6 +120,12 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow) return;
+    mainWindow.maximize();
+    mainWindow.show();
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -605,6 +612,24 @@ ipcMain.handle('collections:removeManga', async (_event, collectionId, mangaId) 
 
 /* ---------- Online Metadata ---------- */
 
+async function remoteImageToDataUrl(url) {
+  if (!url) return null;
+  try {
+    const response = await net.fetch(url, {
+      headers: {
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'User-Agent': 'Sawa Manga Library/2.0.0'
+      }
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return `data:${contentType};base64,${buffer.toString('base64')}`;
+  } catch (_error) {
+    return null;
+  }
+}
+
 ipcMain.handle('metadata:searchOnline', async (_event, query) => {
   if (!query || !query.trim()) return { results: [] };
   try {
@@ -616,42 +641,54 @@ ipcMain.handle('metadata:searchOnline', async (_event, query) => {
     );
     if (!response.ok) return { results: [], error: `HTTP ${response.status}` };
     const json = await response.json();
-    const results = (json.data || []).map((item) => {
+    const rawResults = (json.data || []).map((item) => {
       const attr = item.attributes || {};
-      // Extract title (prefer en, then ja-ro, then first available)
       const titleMap = attr.title || {};
       const title = titleMap.en || titleMap['ja-ro'] || titleMap.ja || Object.values(titleMap)[0] || 'Sans titre';
-      // Alt titles
-      const altTitles = (attr.altTitles || []).map((t) => Object.values(t)[0]).filter(Boolean);
-      const titleJapanese = altTitles.find((t) => /[\u3000-\u9fff\uf900-\ufaff]/.test(t)) || null;
-      // Description
+
+      const rawAltTitles = [
+        ...Object.values(titleMap || {}),
+        ...(attr.altTitles || []).flatMap((entry) => Object.values(entry || {}))
+      ].filter(Boolean);
+
+      const altTitles = [...new Map(
+        rawAltTitles
+          .map((value) => String(value || '').trim())
+          .filter(Boolean)
+          .filter((value) => value.toLowerCase() !== String(title || '').trim().toLowerCase())
+          .map((value) => [value.toLowerCase(), value])
+      ).values()];
+
+      const titleJapanese = altTitles.find((value) => /[　-鿿豈-﫿]/.test(value)) || null;
       const descMap = attr.description || {};
       const synopsis = descMap.fr || descMap.en || Object.values(descMap)[0] || null;
-      // Authors/artists
       const authors = (item.relationships || [])
         .filter((r) => r.type === 'author' || r.type === 'artist')
         .map((r) => r.attributes?.name)
         .filter(Boolean);
       const uniqueAuthors = [...new Set(authors)].join(', ');
-      // Tags/genres
       const genres = (attr.tags || [])
         .filter((t) => t.attributes?.group === 'genre')
         .map((t) => t.attributes?.name?.en || Object.values(t.attributes?.name || {})[0])
         .filter(Boolean);
-      // Cover art
       const coverRel = (item.relationships || []).find((r) => r.type === 'cover_art');
       const coverFileName = coverRel?.attributes?.fileName || null;
+      const coverDownloadUrl = coverFileName ? `https://uploads.mangadex.org/covers/${item.id}/${coverFileName}` : null;
       const coverUrl = coverFileName ? `https://uploads.mangadex.org/covers/${item.id}/${coverFileName}.512.jpg` : null;
+      const coverPreviewUrl = coverFileName ? `https://uploads.mangadex.org/covers/${item.id}/${coverFileName}.256.jpg` : coverUrl;
       return {
-        malId: item.id, // Using MangaDex ID as the unique identifier
+        malId: item.id,
         mangaDexId: item.id,
         title,
         titleJapanese,
         titleEnglish: titleMap.en || null,
+        altTitles,
         synopsis,
         authors: uniqueAuthors,
         genres,
         coverUrl,
+        coverDownloadUrl,
+        coverPreviewUrl,
         score: attr.rating?.bayesian ? Math.round(attr.rating.bayesian * 10) / 10 : null,
         status: attr.status,
         chapters: attr.lastChapter ? parseInt(attr.lastChapter, 10) : null,
@@ -660,6 +697,12 @@ ipcMain.handle('metadata:searchOnline', async (_event, query) => {
         contentRating: attr.contentRating
       };
     });
+
+    const results = await Promise.all(rawResults.map(async (item) => ({
+      ...item,
+      coverPreviewSrc: await remoteImageToDataUrl(item.coverPreviewUrl || item.coverUrl || item.coverDownloadUrl)
+    })));
+
     return { results };
   } catch (error) {
     return { results: [], error: error?.message || 'Network error' };
@@ -673,18 +716,26 @@ ipcMain.handle('metadata:importOnline', async (_event, mangaId, onlineData) => {
   if (onlineData.synopsis) patch.onlineDescription = onlineData.synopsis;
   if (onlineData.authors) patch.onlineAuthor = onlineData.authors;
   if (onlineData.genres) patch.onlineGenres = onlineData.genres;
+  if (Array.isArray(onlineData.altTitles)) {
+    patch.onlineAltTitles = [...new Map(
+      onlineData.altTitles
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .map((value) => [value.toLowerCase(), value])
+    ).values()];
+  }
   if (onlineData.malId) patch.malId = onlineData.malId;
 
-  // Download cover locally if provided
-  if (onlineData.coverUrl) {
+  if (onlineData.coverDownloadUrl || onlineData.coverUrl) {
     try {
       const payload = buildStatePayload();
       const manga = payload.library?.allMangas?.find((m) => m.id === mangaId);
       if (manga?.path && fs.existsSync(manga.path)) {
-        const response = await net.fetch(onlineData.coverUrl);
+        const remoteUrl = onlineData.coverDownloadUrl || onlineData.coverUrl;
+        const response = await net.fetch(remoteUrl);
         if (response.ok) {
           const buffer = Buffer.from(await response.arrayBuffer());
-          const ext = onlineData.coverUrl.includes('.png') ? '.png' : '.jpg';
+          const ext = (path.extname(remoteUrl) || '.jpg').toLowerCase() || '.jpg';
           const coverPath = path.join(manga.path, `.sawa-online-cover${ext}`);
           fs.writeFileSync(coverPath, buffer);
           patch.onlineCoverPath = coverPath;
