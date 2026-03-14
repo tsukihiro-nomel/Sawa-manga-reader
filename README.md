@@ -1,339 +1,314 @@
-# Sawa Manga Library — v1.1.0
+# Sawa Manga Library — v2.0.0
 
-Sawa Manga Library est un lecteur/bibliothèque de mangas **local** pour PC, construit avec **Electron + React + Vite**.
-
-L’application a été pensée pour une bibliothèque organisée par dossiers :
-
-- un dossier = **une catégorie**
-- dans la catégorie, un sous-dossier = **un manga**
-- dans le manga, des sous-dossiers = **les chapitres**
-- si le manga ne contient pas de sous-dossiers chapitre, il est traité comme **one-shot / chapitre unique**
-- les pages sont les images numérotées à l’intérieur du chapitre
+Sawa est un lecteur et gestionnaire de bibliothèque manga **100% local et hors ligne** pour Windows, construit avec **Electron + React + Vite**. Interface premium, lecture immersive, gestion avancée par tags et collections, métadonnées en ligne via MangaDex, et personnalisation poussée.
 
 ---
 
-## 1. Fonctionnalités principales
+## Structure des dossiers
 
-### Bibliothèque
-- import de catégories locales
-- scan automatique des mangas/chapitres/pages
-- recherche
-- tri
-- favoris
-- récents
-- catégories masquées / affichées
-- couvertures personnalisées
-- métadonnées locales : titre, auteur, description
+L'application scanne des dossiers organisés ainsi :
 
-### Onglets
-- onglets multiples façon navigateur
-- restauration des onglets au redémarrage
-- fermeture d’onglet
-- réorganisation drag & drop
-- ouverture en arrière-plan avec clic molette
-
-### Lecture
-- mode **page simple**
-- mode **double page**
-- mode **webtoon / scroll vertical**
-- zoom + / - / reset
-- navigation chapitre précédent / suivant
-- menu déroulant de sélection de chapitre
-- masquage de l’UI en lecture
-- plein écran
-
-### Personnalisation
-- thèmes : Dark Night, Light Paper, Coffee House, Neon City
-- accent couleur personnalisable
-- accent secondaire personnalisable
-- tailles de cartes
-- preview avant lecture activable / désactivable
-
-### Progression
-- suivi de progression par chapitre
-- récents
-- marquage **lu / non lu**
-- réinitialisation de progression
-
----
-
-## 2. Structure des dossiers attendue
-
-```text
-Categorie_A/
+```
+Catégorie/
   Manga 1/
     Chapitre 1/
-      1.jpg
-      2.jpg
-      3.png
+      001.jpg
+      002.jpg
     Chapitre 2/
-      1.webp
-      2.webp
+      001.webp
+      002.webp
 
-  Manga 2/
-    1.jpg
-    2.jpg
-    3.jpg
+  Manga 2 (one-shot)/
+    001.png
+    002.png
 ```
 
-Dans ce cas :
-- `Categorie_A` = une catégorie
-- `Manga 1` = manga multi-chapitres
-- `Manga 2` = one-shot
+- **Dossier racine** = catégorie
+- **Sous-dossier** = manga
+- **Sous-sous-dossier** = chapitre
+- **Pas de sous-dossier chapitre** = one-shot / chapitre unique
 
-Formats d’images supportés par le scanner :
-- jpg / jpeg
-- png
-- webp
-- gif
-- bmp
-- avif
-- jfif
-- svg
-- tif / tiff
+**Formats d'images supportés** : JPG, JPEG, PNG, WebP, GIF, BMP, AVIF, JFIF, SVG, TIF, TIFF
 
 ---
 
-## 3. Stack technique
+## Fonctionnalités
 
-### Frontend
-- **React 18**
-- CSS maison centralisé dans `src/styles/globals.css`
-- `lucide-react` pour les icônes
+### Bibliothèque
 
-### Desktop shell
-- **Electron**
-- preload sécurisé via `contextBridge`
-- protocole custom `manga://local/...` pour charger les images locales
+- Import de catégories locales (dossiers)
+- Scan automatique des mangas, chapitres et pages
+- Détection automatique de nouveaux chapitres
+- Recherche en temps réel (titres, auteurs, descriptions, tags, alias)
+- Tri avancé : A→Z, Z→A, récemment lu, nombre de chapitres, nombre de pages, favoris d'abord, date d'ajout, progression, date de modification
+- Favoris avec écran dédié
+- Récents
+- Catégories masquables / affichables
+- Couvertures personnalisées (upload ou import en ligne)
+- Métadonnées locales : titre, auteur, description, titres alternatifs
+- Grille virtualisée pour les grandes bibliothèques
+- Carousel de mise en avant sur la page d'accueil
+- Taille des cartes configurable : compact, confortable, large
 
-### Build web
-- **Vite**
+### Dashboard
 
-### Packaging Windows
-- **electron-builder**
-- sorties : `nsis`, `msi`, `portable`
+- Vue d'ensemble avec statistiques de la bibliothèque :
+  - Nombre total de mangas, en cours, non lus, terminés
+  - Nombre de favoris et collections
+  - Chapitres lus / total
+  - Progression globale en pourcentage
+- Accès rapide : Bibliothèque, Collections, Favoris, Non lus, Paramètres
+- Sections intelligentes : Continue ta lecture, Ajoutés récemment, Nouveaux chapitres, Favoris, Lus récemment, Terminés
+- Sections dynamiques (n'affiche que celles avec du contenu)
 
-### Watch du système de fichiers
-- **chokidar**
+### Onglets
 
-### Drag & drop d’onglets
-- **@dnd-kit/core**
-- **@dnd-kit/sortable**
-- **@dnd-kit/utilities**
+- Onglets multiples façon navigateur
+- Restauration des onglets au redémarrage
+- Réorganisation par drag & drop
+- Ouverture en arrière-plan (clic molette)
+- Fermeture par clic molette sur l'onglet
+- Historique de navigation par onglet (retour arrière)
+
+### Lecteur
+
+- **Page simple** : une page à la fois
+- **Double spread** : deux pages côte à côte (occidental)
+- **Manga JP** : double page droite-à-gauche (japonais)
+- **Webtoon** : scroll vertical continu
+- Zoom avant / arrière / reset
+- Navigation par chapitre (précédent / suivant)
+- Sélecteur de chapitre en overlay
+- Masquage automatique de l'UI après inactivité
+- Plein écran
+- Préchargement du chapitre suivant (3 dernières pages)
+- Lecture continue automatique vers le chapitre suivant
+- Direction de lecture configurable (gauche→droite ou droite→gauche)
+- Modes d'ajustement : largeur, hauteur, taille originale
+- Aperçu de chapitre (preview pleine page) optionnel avant lecture
+
+### Progression
+
+- Suivi de progression par chapitre (page courante / total)
+- Marquage automatique comme lu (seuil configurable : 90%, 95%, 100%)
+- Marquage manuel lu / non lu (par chapitre ou par manga)
+- Réinitialisation de progression
+- Historique de lecture avec horodatage
+- Pourcentage de progression en temps réel
+- Visualisation par points colorés : vert = lu, jaune = en cours, gris = non lu
+
+### Tags (système unifié)
+
+- Création de tags personnalisés avec choix de couleur (12 couleurs)
+- Suppression de tags (nettoyage automatique des associations)
+- Assignation / retrait de tags par manga via un modal dédié
+- Import automatique des genres MangaDex comme tags (même système)
+- Couleur déterministe basée sur le nom du genre
+- Affichage sur les cartes : max 3 tags visibles + indicateur "+N"
+- Tags affichés comme pilules colorées avec texte blanc
+
+### Collections
+
+#### Collections manuelles
+- Création avec nom, description et couleur
+- Ajout / retrait de mangas
+- Suppression de collections
+
+#### Collections intelligentes (auto-générées)
+- Continue ta lecture
+- Non lus
+- En cours
+- Terminés
+- Favoris
+- Ajoutés récemment (30 jours)
+- Lus récemment (14 jours)
+- Nouveaux chapitres détectés
+- Sans couverture
+- Sans métadonnées
+
+### Métadonnées en ligne (MangaDex)
+
+- Recherche par titre sur l'API MangaDex
+- Aperçu des résultats : couverture, titre, auteurs, genres, synopsis, score
+- Import sélectif : titre, synopsis, auteurs, genres, couverture, titres alternatifs
+- Auto-import des genres comme tags
+- Couverture téléchargée et stockée localement
+- Options configurables : activer/désactiver, couvertures, descriptions, confirmation avant import
+- Fonctionne entièrement hors ligne une fois les données importées
+
+### Personnalisation
+
+#### Thèmes
+1. **Dark Night** — Fond noir profond avec contraste premium
+2. **Light Paper** — Thème clair, lisible et épuré
+3. **Coffee House** — Tons crème, cacao et verre fumé, ambiance cozy
+4. **Neon City** — Fond encre sombre avec cyan électrique et effets cyberpunk
+
+#### Couleurs
+- Couleur d'accent principale (éléments interactifs)
+- Couleur d'accent secondaire (dégradés, effets glow)
+- Saisie directe en hexadécimal
+
+#### Image de fond
+- Choix d'une image personnalisée comme fond global
+- Curseur d'opacité (0–100%) — le thème normal apparaît en fond quand l'opacité baisse
+- Extraction automatique des couleurs dominantes de l'image
+- Option d'appliquer les couleurs extraites comme accents
+- Fonctionne avec tous les thèmes
+- Aperçu en direct dans les paramètres
+
+### Menu contextuel (clic droit)
+
+Le menu varie selon le contexte :
+
+**Sur un manga** : ouvrir, ouvrir dans un nouvel onglet, favoris, marquer lu/non lu, reset progression, éditer métadonnées, changer couverture, gérer tags, ajouter à une collection, supprimer
+
+**Sur un chapitre** : lire, marquer lu/non lu, reset progression
+
+**Sur un onglet** : fermer, fermer les autres, nouvel onglet
+
+**Sur une catégorie** : sélectionner, masquer/afficher, retirer
+
+### Sauvegarde & Export
+
+- **Export .sawa** : exporte toutes les données utilisateur (progression, favoris, tags, collections, paramètres)
+- **Import .sawa** : restaure depuis un fichier de sauvegarde
+- Backup automatique avant chaque import
+- Contenu : métadonnées uniquement (les fichiers manga ne sont pas inclus)
+- Migration automatique v1 → v2 avec backup de sécurité
+
+### Maintenance
+
+- Rescan complet de la bibliothèque
+- Vidage du cache
+- Statistiques d'utilisation
 
 ---
 
-## 4. Arborescence du projet
+## Raccourcis clavier
 
-```text
+### Lecteur
+| Raccourci | Action |
+|-----------|--------|
+| `←` / `→` | Page précédente / suivante |
+| `Ctrl + ←` | Chapitre précédent |
+| `Ctrl + →` | Chapitre suivant |
+| `+` / `-` | Zoom avant / arrière |
+| `0` | Reset zoom |
+| `F` | Plein écran |
+| `H` | Afficher / masquer l'UI |
+| `Esc` | Quitter la lecture |
+
+### Navigation
+| Raccourci | Action |
+|-----------|--------|
+| Clic molette sur manga/chapitre | Ouvrir en arrière-plan |
+| Clic molette sur onglet | Fermer l'onglet |
+| `Ctrl + Z` | Fermer l'onglet actif |
+
+Tous les raccourcis sont personnalisables dans les paramètres.
+
+---
+
+## Stack technique
+
+| Couche | Technologie |
+|--------|-------------|
+| Frontend | React 18, CSS custom, lucide-react |
+| Desktop | Electron 30 |
+| Build web | Vite 5 |
+| Virtualisation | @tanstack/react-virtual |
+| Drag & drop | @dnd-kit |
+| Watch FS | chokidar |
+| Packaging | electron-builder (NSIS, MSI, Portable) |
+
+---
+
+## Arborescence du projet
+
+```
 electron/
-  main.cjs
-  preload.cjs
+  main.cjs                    # Process principal Electron
+  preload.cjs                 # Script preload sécurisé (contextBridge)
   services/
-    storage.cjs
-    watcher.cjs
-    libraryScanner.cjs
+    storage.cjs               # Persistance JSON, tags, collections, backups
+    libraryScanner.cjs        # Scan des dossiers, indexation, résolution tags
+    watcher.cjs               # Surveillance du système de fichiers
 
 src/
-  App.jsx
-  main.jsx
+  App.jsx                     # Composant principal, gestion des onglets et état
+  main.jsx                    # Point d'entrée React
   components/
-    ContextMenu.jsx
-    ChapterPreviewView.jsx
-    Icons.jsx
-    LibraryView.jsx
-    MangaDetailView.jsx
-    ReaderView.jsx
-    SettingsDrawer.jsx
-    Sidebar.jsx
-    TabsBar.jsx
-    TitleBar.jsx
-    TopBar.jsx
+    Dashboard.jsx             # Tableau de bord avec statistiques
+    LibraryView.jsx           # Grille virtualisée + carousel
+    MangaDetailView.jsx       # Détail manga, chapitres, métadonnées
+    MangaCard.jsx             # Carte manga réutilisable
+    ReaderView.jsx            # Lecteur multi-mode
+    ChapterPreviewView.jsx    # Aperçu pleine page
+    CollectionsView.jsx       # Navigateur de collections
+    SettingsDrawer.jsx        # Panneau des paramètres
+    TagManagerModal.jsx       # Modal d'assignation de tags
+    Sidebar.jsx               # Navigation latérale
+    TopBar.jsx                # Recherche, tri, filtres
+    TitleBar.jsx              # Barre de titre avec onglets
+    TabsBar.jsx               # Gestion des onglets
+    ContextMenu.jsx           # Menus contextuels
+    Icons.jsx                 # Définitions d'icônes
   styles/
-    globals.css
+    globals.css               # Tous les styles (thèmes, layouts, composants)
   utils/
-    reader.js
+    reader.js                 # Opérations manga, tri, filtrage
 
 build/
-  icon.ico
-  icon.png
+  icon.ico                    # Icône Windows
+  icon.png                    # Icône PNG
 ```
 
 ---
 
-## 5. Méthodes utilisées dans l’application
-
-### 5.1 Scan et indexation
-Le service `libraryScanner.cjs` :
-- parcourt les catégories enregistrées
-- détecte les mangas
-- détecte les chapitres
-- détecte les pages images
-- génère des identifiants stables à partir des chemins
-- construit les sources `manga://local/...` pour l’affichage dans Electron
-
-### 5.2 Persistance locale
-Le service `storage.cjs` maintient un JSON d’état utilisateur avec :
-- catégories
-- session d’onglets
-- UI
-- métadonnées
-- favoris
-- statut lu / non lu
-- progression
-- récents
-
-### 5.3 Watch des dossiers
-Le watcher observe les catégories importées et force un refresh propre si :
-- un manga est ajouté
-- un chapitre est ajouté
-- des pages changent
-
-### 5.4 Navigation en onglets
-Chaque onglet possède une **stack de vues** :
-- bibliothèque
-- détail manga
-- preview chapitre
-- lecteur
-
-Cela permet un comportement proche d’un navigateur :
-- retour dans l’historique local de l’onglet
-- ouverture en arrière-plan
-- restauration au redémarrage
-
-### 5.5 Lecteur
-Le lecteur gère :
-- simple page
-- double spread
-- webtoon
-- zoom
-- changement de chapitre
-- sauvegarde de progression
-- masquage d’UI
-
-### 5.6 Carrousel home
-Le carrousel :
-- choisit des mangas aléatoires à l’ouverture
-- duplique logiquement les cartes pour un scroll infini
-- supporte le scroll manuel par boutons et drag souris
-- applique un petit effet de parallaxe au hover
-
-### 5.7 Context menu
-Le menu clic droit varie selon le contexte :
-- application
-- manga
-- chapitre
-- onglet
-- lecteur
-
-Exemples d’actions :
-- ouvrir dans cet onglet
-- ouvrir dans un nouvel onglet
-- favoris
-- marquer lu / non lu
-- reset progression
-- éditer les métadonnées
-- changer la couverture
-
----
-
-## 6. Installation
+## Installation & développement
 
 ```bash
 npm install
 npm run dev
 ```
 
----
+## Build Windows
 
-## 7. Build Windows
-
-### EXE (NSIS)
 ```bash
+# Installeur EXE (NSIS)
 npm run dist:exe
-```
 
-### MSI
-```bash
+# Installeur MSI
 npm run dist:msi
-```
 
-### Tous les builds Windows
-```bash
+# Tous les formats Windows
 npm run dist:win
 ```
 
-### Dossier de sortie
-```text
-release/
-```
+Dossier de sortie : `release/`
 
 ---
 
-## 8. Icône personnalisée
+## Icône personnalisée
 
-Place ton icône Windows ici :
-
-```text
-build/icon.ico
+Place ton icône dans :
 ```
-
-Optionnellement, garde aussi un PNG pour la doc / preview :
-
-```text
+build/icon.ico
 build/icon.png
 ```
 
-Puis relance un build.
+---
+
+## Limites (par design)
+
+- Pas de sync cloud — 100% local
+- Pas de protocole OPDS
+- Pas de scraping automatique de métadonnées (recherche manuelle via MangaDex)
+- Application conçue pour Windows
 
 ---
 
-## 9. Raccourcis utiles
+## Philosophie
 
-### Lecture
-- `←` / `→` : page précédente / suivante
-- `Ctrl + ←` : chapitre précédent
-- `Ctrl + →` : chapitre suivant
-- `+` / `-` : zoom
-- `0` : reset zoom
-- `F` : plein écran
-- `H` : afficher / masquer l’UI
-- `Esc` : quitter la lecture
-
-### Onglets
-- clic molette sur manga / chapitre : ouvrir dans un nouvel onglet en arrière-plan
-- clic molette sur onglet : fermeture
-- `Ctrl + Z` : fermer l’onglet actif
-
----
-
-## 10. Notes de design
-
-Le projet vise une interface locale inspirée des apps manga/comics modernes :
-- navigation rapide
-- gros visuels
-- lecteur immersif
-- animation discrète
-- ergonomie orientée collection personnelle
-
----
-
-## 11. Limites actuelles
-
-- pas de sync cloud
-- pas d’OPDS
-- pas de base distante
-- pas de scraping automatique de métadonnées
-- le statut lu / non lu est manuel
-
----
-
-## 12. Évolutions possibles
-
-- tags / collections intelligentes
-- pin tabs
-- duplication d’onglet
-- préchargement du chapitre suivant
-- cache image mémoire/disque plus poussé
-- lecteur panel-by-panel
-- import/export complet des préférences
+Sawa est conçu comme une application locale, premium et respectueuse de la vie privée. Toutes les données restent sur la machine de l'utilisateur. L'interface s'inspire des meilleures apps manga/comics modernes : navigation rapide, gros visuels, lecture immersive, animations discrètes, et ergonomie orientée collection personnelle.
