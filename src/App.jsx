@@ -263,7 +263,16 @@ export default function App() {
 
     const bySearch = lowered
       ? byCategory.filter((manga) => {
-          const haystack = `${manga.displayTitle} ${manga.author} ${manga.description}`.toLowerCase();
+          const tagNames = Array.isArray(manga.tags) ? manga.tags.map((t) => t.name) : [];
+          const collectionNames = Array.isArray(manga.collectionIds)
+            ? manga.collectionIds.map((id) => payload?.persisted?.collections?.[id]?.name).filter(Boolean)
+            : [];
+          const fields = [
+            manga.displayTitle, manga.name, manga.author, manga.description,
+            ...tagNames, ...collectionNames,
+            ...(Array.isArray(manga.aliases) ? manga.aliases : [])
+          ];
+          const haystack = fields.filter(Boolean).join(' ').toLowerCase();
           return haystack.includes(lowered);
         })
       : byCategory;
@@ -456,6 +465,13 @@ export default function App() {
     setActiveTabId(tabId);
   }
 
+  function handleScreenChange(screen) {
+    setActiveScreen(screen);
+    if (activeView.screen !== 'library') {
+      replaceActiveView(normalizeView());
+    }
+  }
+
   useEffect(() => {
     const matchesCloseShortcut = (event) => {
       const key = String(event.key || '').toLowerCase();
@@ -624,12 +640,16 @@ export default function App() {
     await refreshWith(window.mangaAPI.deleteTag(tagId));
   }
 
+  async function handleImportOnlineMetadata(mangaId, onlineData) {
+    await refreshWith(window.mangaAPI.importOnlineMetadata(mangaId, onlineData));
+  }
+
   async function handleToggleTag(mangaId, tagId) {
     await refreshWith(window.mangaAPI.toggleMangaTag(mangaId, tagId));
   }
 
   async function handleAddToCollection(mangaId, collectionId) {
-    await refreshWith(window.mangaAPI.addToCollection(collectionId, mangaId));
+    await refreshWith(window.mangaAPI.addMangaToCollection(collectionId, mangaId));
   }
 
   async function handleCreateCollection(name, description) {
@@ -873,7 +893,7 @@ export default function App() {
           collapsed={ui.sidebarCollapsed}
           onToggleCollapsed={toggleSidebarCollapsed}
           activeScreen={activeScreen}
-          onScreenChange={setActiveScreen}
+          onScreenChange={handleScreenChange}
           categories={visibleCategories}
           allCategories={library.categories}
           selectedCategoryId={selectedCategoryId}
@@ -926,6 +946,7 @@ export default function App() {
               allMangas={library.allMangas}
               persisted={payload?.persisted ?? {}}
               onOpenManga={openMangaInCurrentTab}
+              onCreateCollection={handleCreateCollection}
               onContextMenu={openContextMenu}
             />
           )}
@@ -962,6 +983,7 @@ export default function App() {
               onOpenMetadataEditor={() => setEditingMetadata(currentManga)}
               onAddTag={(mangaId) => setTagManagerManga(currentManga)}
               onAddToCollection={(mangaId) => {}}
+              onImportOnlineMetadata={handleImportOnlineMetadata}
               onContextMenu={openContextMenu}
             />
           )}
@@ -1002,6 +1024,7 @@ export default function App() {
               chapters={currentChapterData.manga.chapters ?? []}
               initialPageIndex={activeView.pageIndex}
               preferredMode={ui.readerMode}
+              autoHideUI={!!ui.autoHideReaderUI}
               onExit={handleReaderExit}
               onOpenChapter={(chapterId) => replaceActiveView({
                 screen: 'reader',

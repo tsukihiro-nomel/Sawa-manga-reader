@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { resolveSmartCollection } from '../utils/reader.js';
 import {
   BookIcon, ClockIcon, HeartIcon, ImageIcon, LayersIcon,
@@ -18,7 +18,53 @@ const SMART_COLLECTIONS = [
   { id: 'smart-no-metadata', label: 'Sans métadonnées', icon: TagIcon, description: 'Mangas sans auteur ni description.' }
 ];
 
-function CollectionsView({ allMangas = [], persisted = {}, onOpenManga, onContextMenu }) {
+function CreateCollectionModal({ onClose, onCreateCollection }) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    await onCreateCollection(name.trim(), description.trim());
+    onClose();
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+        <h3>Créer une collection</h3>
+        <form onSubmit={handleSubmit}>
+          <label>
+            Nom de la collection
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex: Shonen préférés"
+              autoFocus
+            />
+          </label>
+          <label>
+            Description (optionnel)
+            <textarea
+              rows="3"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Une courte description…"
+            />
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="ghost-button" onClick={onClose}>Annuler</button>
+            <button type="submit" className="primary-button" disabled={!name.trim()}>Créer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function CollectionsView({ allMangas = [], persisted = {}, onOpenManga, onCreateCollection, onContextMenu }) {
+  const [showCreate, setShowCreate] = useState(false);
+
   const manualCollections = useMemo(() => {
     const cols = persisted?.collections ?? {};
     return Object.values(cols).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -42,6 +88,9 @@ function CollectionsView({ allMangas = [], persisted = {}, onOpenManga, onContex
     <section className="collections-view">
       <div className="section-header">
         <h2>Collections</h2>
+        <button className="primary-button" onClick={() => setShowCreate(true)}>
+          <PlusIcon size={16} /> Nouvelle collection
+        </button>
       </div>
 
       {manualCollections.length > 0 && (
@@ -112,8 +161,20 @@ function CollectionsView({ allMangas = [], persisted = {}, onOpenManga, onContex
       {manualCollections.length === 0 && (
         <div className="empty-card">
           <h3>Aucune collection manuelle</h3>
-          <p>Crée des collections pour organiser tes mangas sans déplacer les fichiers. Utilise le menu contextuel d'un manga pour l'ajouter à une collection.</p>
+          <p>Crée des collections pour organiser tes mangas sans déplacer les fichiers.</p>
+          <div className="detail-actions-row" style={{ marginTop: 16 }}>
+            <button className="primary-button" onClick={() => setShowCreate(true)}>
+              <PlusIcon size={16} /> Créer une collection
+            </button>
+          </div>
         </div>
+      )}
+
+      {showCreate && (
+        <CreateCollectionModal
+          onClose={() => setShowCreate(false)}
+          onCreateCollection={onCreateCollection}
+        />
       )}
     </section>
   );

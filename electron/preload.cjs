@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('mangaAPI', {
   addTagToManga:          (mangaId, tagId)                => invoke('tags:addToManga', mangaId, tagId),
   removeTagFromManga:     (mangaId, tagId)                => invoke('tags:removeFromManga', mangaId, tagId),
   setMangaTags:           (mangaId, tagIds)               => invoke('tags:setForManga', mangaId, tagIds),
+  toggleMangaTag:         (mangaId, tagId)                => invoke('tags:toggleForManga', mangaId, tagId),
 
   // ── Collections ──────────────────────────────────────
   createCollection:       (name, description, color)      => invoke('collections:create', name, description, color),
@@ -40,6 +41,10 @@ contextBridge.exposeInMainWorld('mangaAPI', {
   updateCollection:       (collectionId, patch)           => invoke('collections:update', collectionId, patch),
   addMangaToCollection:   (collectionId, mangaId)         => invoke('collections:addManga', collectionId, mangaId),
   removeMangaFromCollection: (collectionId, mangaId)      => invoke('collections:removeManga', collectionId, mangaId),
+
+  // ── Online Metadata ─────────────────────────────────
+  searchOnlineMetadata:   (query)                        => invoke('metadata:searchOnline', query),
+  importOnlineMetadata:   (mangaId, onlineData)          => invoke('metadata:importOnline', mangaId, onlineData),
 
   // ── Backup ───────────────────────────────────────────
   createBackup:           (label)                         => invoke('backup:create', label),

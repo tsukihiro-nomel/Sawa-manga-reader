@@ -565,6 +565,17 @@ ipcMain.handle('tags:setForManga', async (_event, mangaId, tagIds) => {
   return buildStatePayload();
 });
 
+ipcMain.handle('tags:toggleForManga', async (_event, mangaId, tagId) => {
+  const state = loadState();
+  const current = state.mangaTags?.[mangaId] || [];
+  if (current.includes(tagId)) {
+    removeTagFromManga(mangaId, tagId);
+  } else {
+    addTagToManga(mangaId, tagId);
+  }
+  return buildStatePayload();
+});
+
 /* ---------- Collections ---------- */
 
 ipcMain.handle('collections:create', async (_event, name, description, color) => {
@@ -589,6 +600,76 @@ ipcMain.handle('collections:addManga', async (_event, collectionId, mangaId) => 
 
 ipcMain.handle('collections:removeManga', async (_event, collectionId, mangaId) => {
   removeMangaFromCollection(collectionId, mangaId);
+  return buildStatePayload();
+});
+
+/* ---------- Online Metadata ---------- */
+
+ipcMain.handle('metadata:searchOnline', async (_event, query) => {
+  if (!query || !query.trim()) return { results: [] };
+  try {
+    const encoded = encodeURIComponent(query.trim());
+    const response = await net.fetch(`https://api.jikan.moe/v4/manga?q=${encoded}&limit=8&sfw=true`);
+    if (!response.ok) return { results: [], error: `HTTP ${response.status}` };
+    const json = await response.json();
+    const results = (json.data || []).map((item) => ({
+      malId: item.mal_id,
+      title: item.title,
+      titleJapanese: item.title_japanese,
+      titleEnglish: item.title_english,
+      synopsis: item.synopsis,
+      authors: (item.authors || []).map((a) => a.name).join(', '),
+      genres: (item.genres || []).map((g) => g.name),
+      coverUrl: item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || null,
+      score: item.score,
+      status: item.status,
+      chapters: item.chapters,
+      volumes: item.volumes
+    }));
+    return { results };
+  } catch (error) {
+    return { results: [], error: error?.message || 'Network error' };
+  }
+});
+
+ipcMain.handle('metadata:importOnline', async (_event, mangaId, onlineData) => {
+  const patch = {};
+  if (onlineData.title) patch.onlineTitle = onlineData.title;
+  if (onlineData.titleJapanese) patch.titleJapanese = onlineData.titleJapanese;
+  if (onlineData.synopsis) patch.onlineDescription = onlineData.synopsis;
+  if (onlineData.authors) patch.onlineAuthor = onlineData.authors;
+  if (onlineData.genres) patch.onlineGenres = onlineData.genres;
+  if (onlineData.malId) patch.malId = onlineData.malId;
+
+  // Download cover locally if provided
+  if (onlineData.coverUrl) {
+    try {
+      const payload = buildStatePayload();
+      const manga = payload.library?.allMangas?.find((m) => m.id === mangaId);
+      if (manga?.path && fs.existsSync(manga.path)) {
+        const response = await net.fetch(onlineData.coverUrl);
+        if (response.ok) {
+          const buffer = Buffer.from(await response.arrayBuffer());
+          const ext = onlineData.coverUrl.includes('.png') ? '.png' : '.jpg';
+          const coverPath = path.join(manga.path, `.sawa-online-cover${ext}`);
+          fs.writeFileSync(coverPath, buffer);
+          patch.onlineCoverPath = coverPath;
+        }
+      }
+    } catch (_) {
+      // Cover download failed silently
+    }
+  }
+
+  updateState((state) => {
+    state.metadata[mangaId] = {
+      ...(state.metadata[mangaId] || {}),
+      ...patch,
+      onlineImportedAt: new Date().toISOString()
+    };
+    return state;
+  });
+
   return buildStatePayload();
 });
 

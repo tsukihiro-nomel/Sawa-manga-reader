@@ -120,17 +120,18 @@ function TitleBar({
         <span>Sawa</span>
       </div>
 
-      <div className="titlebar-tabs-area">
-        <button
-          className="tabsbar-scroll no-drag"
-          onClick={() => trackRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
-          disabled={!canScrollLeft}
-          title="Défiler gauche"
-        >
-          <ChevronLeftIcon size={14} />
-        </button>
+      <div className="titlebar-tabs-area no-drag">
+        {canScrollLeft && (
+          <button
+            className="tabsbar-scroll"
+            onClick={() => trackRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
+            title="Défiler gauche"
+          >
+            <ChevronLeftIcon size={14} />
+          </button>
+        )}
 
-        <div className="tabsbar-track no-drag" ref={trackRef} onWheel={handleWheel}>
+        <div className="tabsbar-track" ref={trackRef} onWheel={handleWheel}>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
               <div className="tabsbar-track-inner">
@@ -142,18 +143,19 @@ function TitleBar({
           </DndContext>
         </div>
 
-        <button className="tabsbar-new no-drag" onClick={onNewTab} title="Nouvel onglet">
+        <button className="tabsbar-new" onClick={onNewTab} title="Nouvel onglet">
           <PlusIcon size={14} />
         </button>
 
-        <button
-          className="tabsbar-scroll no-drag"
-          onClick={() => trackRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
-          disabled={!canScrollRight}
-          title="Défiler droite"
-        >
-          <ChevronRightIcon size={14} />
-        </button>
+        {canScrollRight && (
+          <button
+            className="tabsbar-scroll"
+            onClick={() => trackRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
+            title="Défiler droite"
+          >
+            <ChevronRightIcon size={14} />
+          </button>
+        )}
       </div>
 
       <div className="titlebar-actions no-drag">

@@ -26,6 +26,7 @@ function ReaderView({
   chapters = [],
   initialPageIndex,
   preferredMode,
+  autoHideUI = false,
   onExit,
   onOpenChapter,
   onUpdateProgress,
@@ -77,18 +78,27 @@ function ReaderView({
     setUiHidden(false);
   }, [chapter.id]);
 
-  // Auto-hide UI after 3 seconds of mouse inactivity
+  // Auto-hide UI after 3 seconds of mouse inactivity (only when enabled)
   const resetAutoHideTimer = useCallback(() => {
     if (autoHideTimerRef.current) {
       clearTimeout(autoHideTimerRef.current);
     }
     setUiHidden(false);
-    autoHideTimerRef.current = setTimeout(() => {
-      setUiHidden(true);
-    }, AUTO_HIDE_DELAY);
-  }, []);
+    if (autoHideUI) {
+      autoHideTimerRef.current = setTimeout(() => {
+        setUiHidden(true);
+      }, AUTO_HIDE_DELAY);
+    }
+  }, [autoHideUI]);
 
   useEffect(() => {
+    if (!autoHideUI) {
+      setUiHidden(false);
+      if (autoHideTimerRef.current) {
+        clearTimeout(autoHideTimerRef.current);
+      }
+      return;
+    }
     const handleMouseMove = () => {
       resetAutoHideTimer();
     };
@@ -100,7 +110,7 @@ function ReaderView({
         clearTimeout(autoHideTimerRef.current);
       }
     };
-  }, [resetAutoHideTimer]);
+  }, [resetAutoHideTimer, autoHideUI]);
 
   // Chapter preloading: preload next chapter pages when within last 3 pages
   useEffect(() => {
@@ -326,16 +336,16 @@ function ReaderView({
 
         <div className="reader-toolbar-right">
           <div className="reader-mode-switch">
-            <button className={mode === 'single' ? 'active' : ''} onClick={() => setMode('single')}>
+            <button className={mode === 'single' ? 'active' : ''} onClick={() => setMode('single')} title="1 page">
               <LayoutGridIcon size={16} /> 1 page
             </button>
-            <button className={mode === 'double' ? 'active' : ''} onClick={() => setMode('double')}>
-              <LayoutGridIcon size={16} /> 2 pages
+            <button className={mode === 'double' ? 'active' : ''} onClick={() => setMode('double')} title="2 pages (gauche → droite)">
+              <LayoutGridIcon size={16} /> 2p LTR
             </button>
-            <button className={mode === 'manga-jp' ? 'active' : ''} onClick={() => setMode('manga-jp')}>
-              <LayoutGridIcon size={16} /> Manga JP
+            <button className={mode === 'manga-jp' ? 'active' : ''} onClick={() => setMode('manga-jp')} title="2 pages japonais (droite → gauche)">
+              <LayoutGridIcon size={16} /> 2p JP
             </button>
-            <button className={mode === 'webtoon' ? 'active' : ''} onClick={() => setMode('webtoon')}>
+            <button className={mode === 'webtoon' ? 'active' : ''} onClick={() => setMode('webtoon')} title="Scroll vertical">
               <ScrollIcon size={16} /> Webtoon
             </button>
           </div>

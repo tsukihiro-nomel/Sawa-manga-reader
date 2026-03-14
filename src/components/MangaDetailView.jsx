@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { ChevronLeftIcon, EditIcon, HeartIcon, LayersIcon, PlayIcon, PlusIcon, ScrollIcon, TagIcon } from './Icons.jsx';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeftIcon, EditIcon, HeartIcon, LayersIcon, PlayIcon, PlusIcon, ScrollIcon, SearchIcon, SparklesIcon, TagIcon } from './Icons.jsx';
 import { getProgressPercent } from '../utils/reader.js';
 
 // ---------------------------------------------------------------------------
@@ -119,6 +119,90 @@ function getCoverTypeLabel(coverType) {
 // MangaDetailView
 // ---------------------------------------------------------------------------
 
+function OnlineMetadataModal({ manga, onClose, onImport }) {
+  const [query, setQuery] = useState(manga.displayTitle || '');
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [importing, setImporting] = useState(null);
+
+  async function handleSearch(e) {
+    e?.preventDefault();
+    if (!query.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const response = await window.mangaAPI.searchOnlineMetadata(query.trim());
+      setResults(response.results || []);
+      if (response.error) setError(response.error);
+    } catch (err) {
+      setError(err?.message || 'Erreur réseau');
+    }
+    setLoading(false);
+  }
+
+  async function handleImport(item) {
+    setImporting(item.malId);
+    try {
+      await onImport(manga.id, item);
+      onClose();
+    } catch (_) {
+      setError('Erreur lors de l\'import');
+      setImporting(null);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel modal-panel-wide" onClick={(e) => e.stopPropagation()}>
+        <h3><SearchIcon size={18} /> Rechercher des métadonnées en ligne</h3>
+        <p className="muted-text">Les données importées sont copiées localement et restent disponibles hors ligne.</p>
+        <form onSubmit={handleSearch} className="online-search-form">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher un manga…"
+            autoFocus
+          />
+          <button type="submit" className="primary-button" disabled={loading || !query.trim()}>
+            {loading ? 'Recherche…' : 'Rechercher'}
+          </button>
+        </form>
+        {error && <p className="muted-text" style={{ color: '#ef4444' }}>{error}</p>}
+        <div className="online-results-list">
+          {results.map((item) => (
+            <div key={item.malId} className="online-result-card">
+              <div className="online-result-cover">
+                {item.coverUrl ? <img src={item.coverUrl} alt={item.title} /> : <div className="cover-fallback">?</div>}
+              </div>
+              <div className="online-result-info">
+                <strong>{item.title}</strong>
+                {item.titleJapanese && <small>{item.titleJapanese}</small>}
+                {item.authors && <span className="muted-text">{item.authors}</span>}
+                {item.synopsis && <p className="manga-description-clamp">{item.synopsis.slice(0, 200)}…</p>}
+                <div className="online-result-meta">
+                  {item.score && <span className="badge-pill">Score: {item.score}</span>}
+                  {item.genres?.slice(0, 3).map((g) => <span key={g} className="badge-pill">{g}</span>)}
+                </div>
+              </div>
+              <button
+                className="primary-button online-result-import"
+                onClick={() => handleImport(item)}
+                disabled={importing === item.malId}
+              >
+                {importing === item.malId ? 'Import…' : 'Importer'}
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="ghost-button" onClick={onClose}>Fermer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MangaDetailView({
   manga,
   allTags,
@@ -134,9 +218,11 @@ function MangaDetailView({
   onOpenMetadataEditor,
   onAddTag,
   onAddToCollection,
+  onImportOnlineMetadata,
   onContextMenu
 }) {
   const containerRef = useRef(null);
+  const [showOnlineSearch, setShowOnlineSearch] = useState(false);
 
   // Save scroll position on unmount
   useEffect(() => () => {
@@ -190,6 +276,9 @@ function MangaDetailView({
             <button className="ghost-button" onClick={() => onPickCover(manga.id)}>Changer la couverture</button>
             <button className="ghost-button" onClick={onOpenMetadataEditor}>
               <EditIcon size={16} /> Éditer les infos
+            </button>
+            <button className="ghost-button" onClick={() => setShowOnlineSearch(true)}>
+              <SearchIcon size={16} /> Métadonnées en ligne
             </button>
           </div>
         </div>
@@ -337,6 +426,14 @@ function MangaDetailView({
           </button>
         ))}
       </div>
+
+      {showOnlineSearch && (
+        <OnlineMetadataModal
+          manga={manga}
+          onClose={() => setShowOnlineSearch(false)}
+          onImport={onImportOnlineMetadata}
+        />
+      )}
     </section>
   );
 }
