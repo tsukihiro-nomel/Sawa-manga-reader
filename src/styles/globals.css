@@ -10,7 +10,7 @@
   --text-soft: #a2adc2;
   --border: rgba(255, 255, 255, 0.09);
   --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
-  --titlebar-height: 40px;
+  --titlebar-height: 46px;
   --sidebar-width: 296px;
   --radius-lg: 24px;
   --radius-md: 18px;
@@ -64,18 +64,20 @@ img { display: block; max-width: 100%; }
   height: var(--titlebar-height);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
   backdrop-filter: blur(22px);
+  -webkit-app-region: drag;
 }
-.titlebar-drag-zone {
+.titlebar-tabs-area {
   flex: 1;
-  height: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
-  -webkit-app-region: drag;
+  gap: 6px;
+  -webkit-app-region: no-drag;
 }
 .titlebar-brand {
   display: inline-flex;
@@ -125,17 +127,6 @@ img { display: block; max-width: 100%; }
   border-color: transparent;
 }
 
-.tabsbar {
-  height: 52px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elevated) 90%, transparent);
-  backdrop-filter: blur(22px);
-}
 .tabsbar-track {
   min-width: 0;
   display: flex;
@@ -148,8 +139,8 @@ img { display: block; max-width: 100%; }
 .browser-tab {
   min-width: 0;
   max-width: 280px;
-  height: 40px;
-  border-radius: 16px;
+  height: 34px;
+  border-radius: 12px;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--bg-elevated-2) 82%, transparent);
   color: inherit;
@@ -218,9 +209,9 @@ img { display: block; max-width: 100%; }
   gap: 8px;
 }
 .tabsbar-new {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elevated-2) 92%, transparent);
   color: inherit;
@@ -1301,7 +1292,6 @@ img { display: block; max-width: 100%; }
 }
 
 @media (max-width: 900px) {
-  .tabsbar { grid-template-columns: 1fr auto; }
   .browser-tab { max-width: 100%; }
   .layout-shell { grid-template-columns: 1fr; }
   .sidebar-panel { display: none; }
@@ -1382,7 +1372,6 @@ img { display: block; max-width: 100%; }
 }
 
 .titlebar,
-.tabsbar,
 .sidebar-panel,
 .topbar-shell,
 .hero-card,
@@ -1414,19 +1403,13 @@ img { display: block; max-width: 100%; }
 .titlebar-brand { gap: 12px; }
 .titlebar-sidebar-toggle { margin-right: 2px; }
 
-.tabsbar {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
-  padding: 0 10px;
-}
-.tabsbar-actions-left { justify-content: flex-start; }
 .tabsbar-scroll {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elevated-2) 94%, transparent);
   color: var(--text-soft);
-  border-radius: 12px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
 }
@@ -1855,7 +1838,6 @@ img { display: block; max-width: 100%; }
 }
 
 .theme-light-paper .titlebar,
-.theme-light-paper .tabsbar,
 .theme-light-paper .sidebar-panel,
 .theme-light-paper .topbar-shell,
 .theme-light-paper .hero-card,
@@ -2099,7 +2081,6 @@ img { display: block; max-width: 100%; }
 }
 
 .theme-light-paper .titlebar,
-.theme-light-paper .tabsbar,
 .theme-light-paper .sidebar-panel,
 .theme-light-paper .topbar-shell,
 .theme-light-paper .hero-card,

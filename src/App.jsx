@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import TitleBar from './components/TitleBar.jsx';
-import TabsBar from './components/TabsBar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import TopBar from './components/TopBar.jsx';
 import LibraryView from './components/LibraryView.jsx';
@@ -861,8 +860,6 @@ export default function App() {
       <TitleBar
         sidebarCollapsed={ui.sidebarCollapsed}
         onToggleSidebar={toggleSidebarCollapsed}
-      />
-      <TabsBar
         tabs={tabsMeta}
         activeTabId={activeTabId}
         onSelectTab={handleSelectTab}
