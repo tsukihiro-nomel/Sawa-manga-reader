@@ -667,15 +667,16 @@ img { display: block; max-width: 100%; }
   padding: 0 24px;
 }
 .manga-grid-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(var(--grid-columns, 5), minmax(0, 1fr));
   gap: 18px;
   padding: 0 0 18px;
   align-items: start;
 }
 .manga-grid-row > .manga-card,
 .manga-grid-row > .mc {
-  flex: 1 1 0;
   min-width: 0;
+  width: 100%;
   max-width: 100%;
 }
 .manga-card,
@@ -4481,15 +4482,16 @@ img { display: block; max-width: 100%; }
 /* ===== Dashboard Overhaul ===== */
 .dashboard-view {
   overflow-y: auto;
-  padding: 0 24px 36px;
+  padding: 24px 24px 36px;
 }
 .dash-hero {
-  padding: 36px 0 24px;
+  padding: 34px 32px 28px;
 }
 .dash-hero-content {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  max-width: 720px;
 }
 .dash-hero-content h1 {
   margin: 0;

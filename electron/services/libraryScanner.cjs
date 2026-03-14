@@ -279,12 +279,28 @@ function scanManga(mangaPath, persistedState) {
   const addedAt = stats?.birthtime?.toISOString?.() || stats?.ctime?.toISOString?.() || null;
   const modifiedAt = stats?.mtime?.toISOString?.() || null;
 
+  const displayTitle = metadata.title?.trim() || metadata.onlineTitle?.trim() || mangaName;
+  const aliases = [...new Map(
+    [
+      ...(Array.isArray(metadata.aliases) ? metadata.aliases : []),
+      ...(Array.isArray(metadata.onlineAltTitles) ? metadata.onlineAltTitles : []),
+      metadata.titleJapanese,
+      metadata.titleEnglish,
+      mangaName !== displayTitle ? mangaName : null
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .filter((value) => value.toLowerCase() !== displayTitle.toLowerCase())
+      .map((value) => [value.toLowerCase(), value])
+  ).values()];
+
   return {
     id: mangaId,
     name: mangaName,
-    displayTitle: metadata.title?.trim() || metadata.onlineTitle?.trim() || mangaName,
+    displayTitle,
     author: metadata.author?.trim() || metadata.onlineAuthor?.trim() || '',
     description: metadata.description?.trim() || metadata.onlineDescription?.trim() || '',
+    aliases,
     path: mangaPath,
     chapterCount: chapters.length,
     completedChapterCount,
