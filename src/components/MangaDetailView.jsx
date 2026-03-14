@@ -259,146 +259,132 @@ function MangaDetailView({
 
   return (
     <section className="detail-view" ref={containerRef} onScroll={handleScroll}>
+      {/* Back navigation */}
       <button className="ghost-button back-button" onClick={onBack}>
-        <ChevronLeftIcon size={16} /> Retour bibliothèque
+        <ChevronLeftIcon size={16} /> Retour
       </button>
 
+      {/* Hero banner */}
       <div className="detail-hero" onContextMenu={(event) => onContextMenu(event, { type: 'manga', manga })}>
         <div className="detail-cover-card">
           {manga.coverSrc
             ? <img src={manga.coverSrc} alt={manga.displayTitle} className="detail-cover" loading="lazy" />
             : <div className="cover-fallback detail-cover-fallback">{manga.displayTitle[0]}</div>
           }
-          {manga.coverType && (
-            <span className="detail-cover-type-badge">{getCoverTypeLabel(manga.coverType)}</span>
-          )}
-          <div className="detail-cover-actions">
-            <button className="ghost-button" onClick={() => onPickCover(manga.id)}>Changer la couverture</button>
-            <button className="ghost-button" onClick={onOpenMetadataEditor}>
-              <EditIcon size={16} /> Éditer les infos
-            </button>
-            <button className="ghost-button" onClick={() => setShowOnlineSearch(true)}>
-              <SearchIcon size={16} /> Métadonnées en ligne
-            </button>
-          </div>
         </div>
 
         <div className="detail-copy">
-          {/* Title row with ellipsis + tooltip for long titles */}
           <div className="detail-title-row">
             <div className="detail-title-block">
               <h1 className="detail-title-ellipsis" title={manga.displayTitle}>{manga.displayTitle}</h1>
-              {manga.author ? <p className="muted-text">{manga.author}</p> : null}
+              {manga.author && <p className="detail-author">{manga.author}</p>}
             </div>
             <button
               className={`favorite-toggle detail-favorite ${manga.isFavorite ? 'favorite-toggle-active' : ''}`}
               onClick={() => onToggleFavorite(manga.id)}
               title={manga.isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
             >
-              <HeartIcon size={18} filled={manga.isFavorite} />
+              <HeartIcon size={20} filled={manga.isFavorite} />
             </button>
           </div>
 
-          {/* Stats badges */}
-          <div className="detail-tags">
-            <span className="badge-pill">{manga.chapterCount} chapitres</span>
-            <span className="badge-pill">{manga.pageCount} pages</span>
-            <span className="badge-pill">{manga.completedChapterCount ?? 0}/{manga.chapterCount} chapitres lus</span>
-            <span className="badge-pill badge-pill-state">{getReadingStateLabel(readingState)}</span>
+          {/* Compact stats row */}
+          <div className="detail-stats-row">
+            <span className={`detail-status detail-status-${readingState}`}>{getReadingStateLabel(readingState)}</span>
+            <span>{manga.chapterCount} chapitres</span>
+            <span>{manga.completedChapterCount ?? 0} lus</span>
+            <span>{progressPercent}%</span>
           </div>
 
-          {/* Progression bar */}
+          {/* Progress bar */}
           <div className="detail-progress-bar-wrap">
             <div className="detail-progress-bar">
               <div className="detail-progress-bar-fill" style={{ width: `${progressPercent}%` }} />
             </div>
-            <span className="detail-progress-label">Progression {progressPercent}%</span>
           </div>
 
-          {/* Description */}
-          <p className="detail-description">
-            {manga.description || 'Aucune description pour le moment. Tu peux en ajouter une depuis le bouton éditer.'}
-          </p>
-
-          {/* Tags as colored pills */}
-          {(manga.tags?.length > 0 || onAddTag) && (
-            <div className="detail-tag-pills">
-              <TagIcon size={14} />
-              {manga.tags?.map((tag) => (
-                <span key={tag.id} className="manga-tag-pill" style={{ '--tag-color': tag.color }}>
-                  {tag.name}
-                </span>
-              ))}
-              {onAddTag && (
-                <button
-                  className="ghost-button detail-tag-add-btn"
-                  onClick={() => onAddTag(manga.id)}
-                  title="Ajouter un tag"
-                >
-                  <PlusIcon size={12} />
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Collections this manga belongs to */}
-          {(mangaCollections.length > 0 || onAddToCollection) && (
-            <div className="detail-collections">
-              <LayersIcon size={14} />
-              {mangaCollections.map((col) => (
-                <span key={col.id} className="badge-pill badge-pill-collection">{col.name}</span>
-              ))}
-              {onAddToCollection && (
-                <button
-                  className="ghost-button detail-collection-add-btn"
-                  onClick={() => onAddToCollection(manga.id)}
-                  title="Ajouter à une collection"
-                >
-                  <PlusIcon size={12} />
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Dates */}
-          <div className="detail-dates">
-            {manga.addedAt && <span className="muted-text">Ajouté le {formatDate(manga.addedAt)}</span>}
-            {manga.lastReadAt && <span className="muted-text">Lu pour la dernière fois le {formatDate(manga.lastReadAt)}</span>}
-          </div>
-
-          {/* Quick actions */}
+          {/* Primary actions */}
           <div className="detail-actions-row">
             {resumeChapterId && (
               <button className="primary-button" onClick={() => onOpenChapter(resumeChapterId)}>
-                <PlayIcon size={16} /> Reprendre la lecture
+                <PlayIcon size={16} /> Reprendre
               </button>
             )}
             {manga.chapters[0] && (
-              <>
-                <button className="ghost-button" onClick={() => onOpenChapter(manga.chapters[0].id)}>
-                  <ScrollIcon size={16} /> Premier chapitre
-                </button>
-                <button className="ghost-button" onClick={() => onOpenChapterInNewTab(manga.chapters[0].id)}>
-                  <PlusIcon size={16} /> Nouvel onglet
-                </button>
-              </>
+              <button className="ghost-button" onClick={() => onOpenChapter(manga.chapters[0].id)}>
+                <ScrollIcon size={16} /> Ch. 1
+              </button>
             )}
+            <button className="ghost-button" onClick={onOpenMetadataEditor}>
+              <EditIcon size={14} />
+            </button>
+            <button className="ghost-button" onClick={() => setShowOnlineSearch(true)}>
+              <SearchIcon size={14} />
+            </button>
+            <button className="ghost-button" onClick={() => onPickCover(manga.id)}>
+              <SparklesIcon size={14} />
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Chapter list header */}
+      {/* Info section below hero */}
+      <div className="detail-info-section">
+        {/* Description */}
+        {manga.description && (
+          <div className="detail-description-block">
+            <p className="detail-description">{manga.description}</p>
+          </div>
+        )}
+
+        {/* Tags */}
+        {(manga.tags?.length > 0 || onAddTag) && (
+          <div className="detail-tag-pills">
+            <TagIcon size={14} />
+            {manga.tags?.map((tag) => (
+              <span key={tag.id} className="manga-tag-pill" style={{ '--tag-color': tag.color }}>{tag.name}</span>
+            ))}
+            {onAddTag && (
+              <button className="ghost-button detail-tag-add-btn" onClick={() => onAddTag(manga.id)} title="Gérer les tags">
+                <PlusIcon size={12} />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Collections */}
+        {(mangaCollections.length > 0 || onAddToCollection) && (
+          <div className="detail-collections">
+            <LayersIcon size={14} />
+            {mangaCollections.map((col) => (
+              <span key={col.id} className="badge-pill badge-pill-collection">{col.name}</span>
+            ))}
+            {onAddToCollection && (
+              <button className="ghost-button detail-collection-add-btn" onClick={() => onAddToCollection(manga.id)} title="Gérer les collections">
+                <PlusIcon size={12} />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Dates */}
+        <div className="detail-dates">
+          {manga.addedAt && <span className="muted-text">Ajouté {formatDate(manga.addedAt)}</span>}
+          {manga.lastReadAt && <span className="muted-text">Dernière lecture {formatDate(manga.lastReadAt)}</span>}
+        </div>
+      </div>
+
+      {/* Chapters */}
       <div className="section-header">
         <h2>Chapitres</h2>
         <span>{manga.chapters.length} élément{manga.chapters.length > 1 ? 's' : ''}</span>
       </div>
 
-      {/* Chapter grid with per-chapter reading state dot */}
       <div className="chapter-grid">
         {manga.chapters.map((chapter, index) => (
           <button
             key={chapter.id}
-            className="chapter-card"
+            className={`chapter-card ${chapter.isRead ? 'chapter-card-read' : ''}`}
             onClick={() => onOpenChapter(chapter.id)}
             onMouseDown={middleMouseDown}
             onMouseUp={(event) => middleMouseUp(event, () => onOpenChapterInBackgroundTab(chapter.id))}
@@ -409,19 +395,11 @@ function MangaDetailView({
                 ? <img src={chapter.previewSrc} alt={chapter.name} className="chapter-cover" loading="lazy" />
                 : <div className="cover-fallback">{index + 1}</div>
               }
-              <span className="chapter-index">{String(index + 1).padStart(2, '0')}</span>
               <span className={getChapterDotClass(chapter)} />
             </div>
             <div className="chapter-card-body">
               <strong>{chapter.name}</strong>
-              <span>
-                {chapter.pageCount} pages
-                {' · '}
-                {chapter.isRead
-                  ? 'Lu'
-                  : `${getProgressPercent(chapter.progress)}%`
-                }
-              </span>
+              <span>{chapter.pageCount} p. · {chapter.isRead ? 'Lu' : `${getProgressPercent(chapter.progress)}%`}</span>
             </div>
           </button>
         ))}

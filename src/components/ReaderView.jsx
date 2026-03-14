@@ -434,15 +434,15 @@ function ReaderView({
               <>
                 <img
                   className="reader-page reader-page-double"
-                  src={safePages[currentMangaJPSpread.end]?.src}
-                  alt={`Page ${currentMangaJPSpread.end + 1}`}
+                  src={safePages[currentMangaJPSpread.start]?.src}
+                  alt={`Page ${currentMangaJPSpread.start + 1}`}
                   style={{ maxWidth: `${480 * zoom}px` }}
                   onClick={(event) => event.stopPropagation()}
                 />
                 <img
                   className="reader-page reader-page-double"
-                  src={safePages[currentMangaJPSpread.start]?.src}
-                  alt={`Page ${currentMangaJPSpread.start + 1}`}
+                  src={safePages[currentMangaJPSpread.end]?.src}
+                  alt={`Page ${currentMangaJPSpread.end + 1}`}
                   style={{ maxWidth: `${480 * zoom}px` }}
                   onClick={(event) => event.stopPropagation()}
                 />

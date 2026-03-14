@@ -682,9 +682,11 @@ ipcMain.handle('backup:create', async (_event, label) => {
 
 ipcMain.handle('backup:import', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Importer une sauvegarde',
+    title: 'Importer une sauvegarde Sawa',
     properties: ['openFile'],
-    filters: [{ name: 'Sawa Backup', extensions: ['json'] }]
+    filters: [
+      { name: 'Sawa Backup', extensions: ['sawa', 'json'] }
+    ]
   });
 
   if (result.canceled || result.filePaths.length === 0) {
@@ -704,15 +706,16 @@ ipcMain.handle('backup:list', async () => {
   return listBackups();
 });
 
-ipcMain.handle('backup:export', async (_event, backupPath) => {
-  if (!backupPath || !fs.existsSync(backupPath)) {
-    return { exported: false, error: 'Backup file not found' };
-  }
+ipcMain.handle('backup:export', async () => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const defaultName = `sawa-backup-${timestamp}.sawa`;
 
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: 'Exporter la sauvegarde',
-    defaultPath: path.basename(backupPath),
-    filters: [{ name: 'Sawa Backup', extensions: ['json'] }]
+    title: 'Exporter la sauvegarde Sawa',
+    defaultPath: defaultName,
+    filters: [
+      { name: 'Sawa Backup', extensions: ['sawa'] }
+    ]
   });
 
   if (result.canceled || !result.filePath) {
@@ -720,7 +723,9 @@ ipcMain.handle('backup:export', async (_event, backupPath) => {
   }
 
   try {
-    fs.copyFileSync(backupPath, result.filePath);
+    // Export the current state file directly
+    const stateData = loadState();
+    fs.writeFileSync(result.filePath, JSON.stringify(stateData, null, 2), 'utf-8');
     return { exported: true, path: result.filePath };
   } catch (error) {
     return { exported: false, error: error?.message || 'Export failed' };

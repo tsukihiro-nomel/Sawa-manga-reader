@@ -116,9 +116,9 @@ function normalizeThemeName(theme) {
 }
 
 function cardSizeMinWidth(cardSize) {
-  if (cardSize === 'compact') return '190px';
-  if (cardSize === 'large') return '250px';
-  return '215px';
+  if (cardSize === 'compact') return '180px';
+  if (cardSize === 'large') return '320px';
+  return '240px';
 }
 
 function buildMangaAggregate(manga) {
@@ -656,6 +656,18 @@ export default function App() {
     await refreshWith(window.mangaAPI.createCollection(name, description));
   }
 
+  async function handleDeleteCollection(collectionId) {
+    await refreshWith(window.mangaAPI.deleteCollection(collectionId));
+  }
+
+  async function handleUpdateCollection(collectionId, patch) {
+    await refreshWith(window.mangaAPI.updateCollection(collectionId, patch));
+  }
+
+  async function handleRemoveMangaFromCollection(collectionId, mangaId) {
+    await refreshWith(window.mangaAPI.removeMangaFromCollection(collectionId, mangaId));
+  }
+
   async function handleUpdateSettings(patch) {
     await refreshWith(window.mangaAPI.updateSettings(patch));
   }
@@ -768,6 +780,7 @@ export default function App() {
 
     const items = [];
     if (context.type === 'manga' && context.manga) {
+      const collections = Object.values(payload?.persisted?.collections ?? {});
       items.push(
         actionItem('Ouvrir dans cet onglet', () => openMangaInCurrentTab(context.manga.id), { icon: <LayoutGridIcon size={14} /> }),
         actionItem('Ouvrir dans un nouvel onglet', () => openMangaInNewTab(context.manga.id), { icon: <PlusIcon size={14} /> }),
@@ -780,14 +793,44 @@ export default function App() {
         }),
         separatorItem(),
         actionItem('Gérer les tags', () => setTagManagerManga(context.manga), { icon: <TagIcon size={14} /> }),
-        actionItem('Ajouter à une collection', () => {
-          const collections = Object.values(payload?.persisted?.collections ?? {});
-          if (collections.length > 0) {
-            handleAddToCollection(context.manga.id, collections[0].id);
-          }
-        }, { icon: <LayersIcon size={14} /> }),
         actionItem('Éditer les métadonnées', () => setEditingMetadata(context.manga), { icon: <EditIcon size={14} /> }),
-        actionItem('Choisir une couverture', () => handlePickCover(context.manga.id), { icon: <SparklesIcon size={14} /> }),
+        actionItem('Rechercher les métadonnées en ligne', () => {
+          openMangaInCurrentTab(context.manga.id);
+          // The online search modal will be triggered from the detail view
+        }, { icon: <SearchIcon size={14} /> }),
+        actionItem('Choisir une couverture', () => handlePickCover(context.manga.id), { icon: <SparklesIcon size={14} /> })
+      );
+      // Collection sub-items
+      if (collections.length > 0) {
+        items.push(separatorItem());
+        collections.forEach((col) => {
+          const isInCol = (col.mangaIds || []).includes(context.manga.id);
+          items.push(
+            actionItem(
+              isInCol ? `✓ ${col.name}` : col.name,
+              () => {
+                if (isInCol) {
+                  handleRemoveMangaFromCollection(col.id, context.manga.id);
+                } else {
+                  handleAddToCollection(context.manga.id, col.id);
+                }
+              },
+              { icon: <LayersIcon size={14} /> }
+            )
+          );
+        });
+      }
+      items.push(
+        separatorItem(),
+        actionItem('Nouvelle collection avec ce manga', async () => {
+          await handleCreateCollection(context.manga.displayTitle, '');
+          // Add manga to the newly created collection
+          const updated = await window.mangaAPI.bootstrap();
+          const newCols = Object.values(updated?.persisted?.collections ?? {});
+          const newest = newCols.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
+          if (newest) await handleAddToCollection(context.manga.id, newest.id);
+          refreshWith(window.mangaAPI.bootstrap());
+        }, { icon: <PlusIcon size={14} /> }),
         separatorItem(),
         actionItem('Réinitialiser la progression', () => handleResetProgress(context.manga.id, context.manga.chapters.map((chapter) => chapter.id)), {
           icon: <TrashIcon size={14} />,
@@ -955,6 +998,9 @@ export default function App() {
               persisted={payload?.persisted ?? {}}
               onOpenManga={openMangaInCurrentTab}
               onCreateCollection={handleCreateCollection}
+              onDeleteCollection={handleDeleteCollection}
+              onUpdateCollection={handleUpdateCollection}
+              onRemoveMangaFromCollection={handleRemoveMangaFromCollection}
               onContextMenu={openContextMenu}
             />
           )}

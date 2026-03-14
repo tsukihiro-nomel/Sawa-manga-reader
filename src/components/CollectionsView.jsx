@@ -1,8 +1,8 @@
 import { memo, useMemo, useState } from 'react';
 import { resolveSmartCollection } from '../utils/reader.js';
 import {
-  BookIcon, ClockIcon, HeartIcon, ImageIcon, LayersIcon,
-  PlayIcon, PlusIcon, SparklesIcon, TagIcon, ZapIcon
+  BookIcon, ChevronLeftIcon, ClockIcon, EditIcon, HeartIcon, ImageIcon, LayersIcon,
+  PlayIcon, PlusIcon, SparklesIcon, TagIcon, TrashIcon, ZapIcon
 } from './Icons.jsx';
 
 const SMART_COLLECTIONS = [
@@ -18,43 +18,36 @@ const SMART_COLLECTIONS = [
   { id: 'smart-no-metadata', label: 'Sans métadonnées', icon: TagIcon, description: 'Mangas sans auteur ni description.' }
 ];
 
-function CreateCollectionModal({ onClose, onCreateCollection }) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+// ── Create/Edit Collection Modal ──
+function CollectionFormModal({ onClose, onSubmit, initial }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [description, setDescription] = useState(initial?.description || '');
 
-  async function handleSubmit(e) {
+  function handleSubmit(e) {
     e.preventDefault();
     if (!name.trim()) return;
-    await onCreateCollection(name.trim(), description.trim());
+    onSubmit({ name: name.trim(), description: description.trim() });
     onClose();
   }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-        <h3>Créer une collection</h3>
+        <h3>{initial ? 'Modifier la collection' : 'Nouvelle collection'}</h3>
         <form onSubmit={handleSubmit}>
           <label>
             Nom de la collection
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ex: Shonen préférés"
-              autoFocus
-            />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Shonen préférés" autoFocus />
           </label>
           <label>
             Description (optionnel)
-            <textarea
-              rows="3"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Une courte description…"
-            />
+            <textarea rows="3" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Une courte description…" />
           </label>
           <div className="modal-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Annuler</button>
-            <button type="submit" className="primary-button" disabled={!name.trim()}>Créer</button>
+            <button type="submit" className="primary-button" disabled={!name.trim()}>
+              {initial ? 'Enregistrer' : 'Créer'}
+            </button>
           </div>
         </form>
       </div>
@@ -62,13 +55,127 @@ function CreateCollectionModal({ onClose, onCreateCollection }) {
   );
 }
 
-function CollectionsView({ allMangas = [], persisted = {}, onOpenManga, onCreateCollection, onContextMenu }) {
+// ── Collection Detail View (shows mangas inside a collection) ──
+function CollectionDetailView({ collection, mangas, onBack, onOpenManga, onRemoveManga, onEditCollection, onDeleteCollection, onContextMenu }) {
+  return (
+    <div className="collection-detail">
+      <div className="collection-detail-header">
+        <button className="ghost-button" onClick={onBack}>
+          <ChevronLeftIcon size={16} /> Retour
+        </button>
+        <div className="collection-detail-actions">
+          <button className="ghost-button" onClick={onEditCollection} title="Modifier">
+            <EditIcon size={16} />
+          </button>
+          <button className="ghost-button" onClick={onDeleteCollection} title="Supprimer la collection">
+            <TrashIcon size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="collection-detail-info">
+        <h2>{collection.name}</h2>
+        {collection.description && <p className="muted-text">{collection.description}</p>}
+        <span className="collection-detail-count">{mangas.length} manga{mangas.length > 1 ? 's' : ''}</span>
+      </div>
+
+      {mangas.length === 0 ? (
+        <div className="empty-card">
+          <h3>Collection vide</h3>
+          <p>Ajoute des mangas depuis le menu contextuel (clic droit sur un manga).</p>
+        </div>
+      ) : (
+        <div className="collection-manga-list">
+          {mangas.map((manga) => (
+            <div
+              key={manga.id}
+              className="collection-manga-row"
+              onClick={() => onOpenManga(manga.id)}
+              onContextMenu={(e) => onContextMenu?.(e, { type: 'manga', manga })}
+            >
+              <div className="collection-manga-cover">
+                {manga.coverSrc
+                  ? <img src={manga.coverSrc} alt={manga.displayTitle} loading="lazy" />
+                  : <div className="cover-fallback cover-fallback-sm">{(manga.displayTitle || '?')[0]}</div>
+                }
+              </div>
+              <div className="collection-manga-info">
+                <strong>{manga.displayTitle}</strong>
+                <span className="muted-text">{manga.chapterCount} ch. · {manga.progressPercent ?? 0}%</span>
+                {manga.author && <span className="muted-text">{manga.author}</span>}
+              </div>
+              <button
+                className="ghost-button collection-manga-remove"
+                onClick={(e) => { e.stopPropagation(); onRemoveManga(manga.id); }}
+                title="Retirer de la collection"
+              >
+                <TrashIcon size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MDList-style Collection Card ──
+function MDListCard({ collection, mangas, onOpen, onContextMenu }) {
+  return (
+    <div
+      className="mdlist-card"
+      onClick={() => onOpen(collection.id)}
+      onContextMenu={(e) => onContextMenu?.(e, { type: 'collection', collection })}
+    >
+      <div className="mdlist-card-header">
+        <div className="mdlist-card-title">
+          <h3>{collection.name}</h3>
+          <span className="muted-text">{mangas.length} manga{mangas.length > 1 ? 's' : ''}</span>
+        </div>
+      </div>
+      {collection.description && <p className="mdlist-card-desc muted-text">{collection.description}</p>}
+      {mangas.length > 0 && (
+        <div className="mdlist-card-covers">
+          {mangas.slice(0, 8).map((m) => (
+            <div key={m.id} className="mdlist-cover-thumb">
+              {m.coverSrc
+                ? <img src={m.coverSrc} alt={m.displayTitle} loading="lazy" />
+                : <div className="cover-fallback cover-fallback-sm">{(m.displayTitle || '?')[0]}</div>
+              }
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main CollectionsView ──
+function CollectionsView({
+  allMangas = [],
+  persisted = {},
+  onOpenManga,
+  onCreateCollection,
+  onDeleteCollection,
+  onUpdateCollection,
+  onRemoveMangaFromCollection,
+  onContextMenu
+}) {
   const [showCreate, setShowCreate] = useState(false);
+  const [activeCollectionId, setActiveCollectionId] = useState(null);
+  const [editingCollection, setEditingCollection] = useState(null);
+  const [activeTab, setActiveTab] = useState('manual'); // 'manual' | 'smart'
 
   const manualCollections = useMemo(() => {
     const cols = persisted?.collections ?? {};
     return Object.values(cols).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }, [persisted?.collections]);
+
+  const mangaById = useMemo(() => {
+    const map = {};
+    for (const m of allMangas) map[m.id] = m;
+    return map;
+  }, [allMangas]);
 
   const smartCounts = useMemo(() => {
     const counts = {};
@@ -78,102 +185,149 @@ function CollectionsView({ allMangas = [], persisted = {}, onOpenManga, onCreate
     return counts;
   }, [allMangas, persisted]);
 
-  const mangaById = useMemo(() => {
-    const map = {};
-    for (const m of allMangas) map[m.id] = m;
-    return map;
-  }, [allMangas]);
+  // Active collection detail view
+  const activeCollection = useMemo(() => {
+    if (!activeCollectionId) return null;
+    // Check smart collections first
+    const smart = SMART_COLLECTIONS.find((sc) => sc.id === activeCollectionId);
+    if (smart) {
+      const mangas = resolveSmartCollection(allMangas, smart.id, persisted);
+      return { collection: { id: smart.id, name: smart.label, description: smart.description, isSmart: true }, mangas };
+    }
+    // Manual collection
+    const cols = persisted?.collections ?? {};
+    const col = cols[activeCollectionId];
+    if (!col) return null;
+    const mangaIds = col.mangaIds || [];
+    const mangas = mangaIds.map((id) => mangaById[id]).filter(Boolean);
+    return { collection: col, mangas };
+  }, [activeCollectionId, persisted, allMangas, mangaById]);
 
+  // Detail view
+  if (activeCollection) {
+    return (
+      <section className="collections-view">
+        <CollectionDetailView
+          collection={activeCollection.collection}
+          mangas={activeCollection.mangas}
+          onBack={() => setActiveCollectionId(null)}
+          onOpenManga={onOpenManga}
+          onRemoveManga={(mangaId) => {
+            if (activeCollection.collection.isSmart) return;
+            onRemoveMangaFromCollection?.(activeCollection.collection.id, mangaId);
+          }}
+          onEditCollection={() => {
+            if (activeCollection.collection.isSmart) return;
+            setEditingCollection(activeCollection.collection);
+          }}
+          onDeleteCollection={() => {
+            if (activeCollection.collection.isSmart) return;
+            onDeleteCollection?.(activeCollection.collection.id);
+            setActiveCollectionId(null);
+          }}
+          onContextMenu={onContextMenu}
+        />
+        {editingCollection && (
+          <CollectionFormModal
+            initial={editingCollection}
+            onClose={() => setEditingCollection(null)}
+            onSubmit={(data) => {
+              onUpdateCollection?.(editingCollection.id, data);
+              setEditingCollection(null);
+            }}
+          />
+        )}
+      </section>
+    );
+  }
+
+  // Main list view
   return (
     <section className="collections-view">
-      <div className="section-header">
-        <h2>Collections</h2>
+      <div className="collections-top-bar">
+        <h2>Mes Collections</h2>
         <button className="primary-button" onClick={() => setShowCreate(true)}>
           <PlusIcon size={16} /> Nouvelle collection
         </button>
       </div>
 
-      {manualCollections.length > 0 && (
-        <div className="collections-section">
-          <div className="section-header">
-            <h3><LayersIcon size={18} /> Collections manuelles</h3>
-          </div>
-          <div className="collections-grid">
-            {manualCollections.map((col) => {
-              const mangaIds = col.mangaIds || [];
-              const covers = mangaIds.slice(0, 4).map((id) => mangaById[id]).filter(Boolean);
-              return (
-                <div key={col.id} className="collection-card" onClick={() => covers[0] && onOpenManga(covers[0].id)}>
-                  <div className="collection-card-header">
-                    <span className="collection-card-icon collection-card-icon-manual">
-                      <LayersIcon size={20} />
-                    </span>
-                    <div>
-                      <h4>{col.name}</h4>
-                      <span className="collection-card-count">{mangaIds.length} manga{mangaIds.length > 1 ? 's' : ''}</span>
-                    </div>
-                  </div>
-                  {col.description && <p>{col.description}</p>}
-                  {covers.length > 0 && (
-                    <div className="collection-card-covers">
-                      {covers.map((m) => (
-                        m.coverSrc
-                          ? <img key={m.id} src={m.coverSrc} alt={m.displayTitle} loading="lazy" />
-                          : <div key={m.id} className="cover-fallback">{(m.displayTitle || '?')[0]}</div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      <div className="collections-tabs">
+        <button
+          className={`collections-tab ${activeTab === 'manual' ? 'collections-tab-active' : ''}`}
+          onClick={() => setActiveTab('manual')}
+        >
+          Mes collections
+        </button>
+        <button
+          className={`collections-tab ${activeTab === 'smart' ? 'collections-tab-active' : ''}`}
+          onClick={() => setActiveTab('smart')}
+        >
+          Collections intelligentes
+        </button>
+      </div>
+
+      {activeTab === 'manual' && (
+        <>
+          {/* New Collection button (MDList-style) */}
+          <button className="mdlist-new-btn" onClick={() => setShowCreate(true)}>
+            <PlusIcon size={18} /> Nouvelle collection
+          </button>
+
+          {manualCollections.length === 0 ? (
+            <div className="empty-card">
+              <h3>Aucune collection</h3>
+              <p>Crée des collections pour organiser tes mangas. Clique sur le bouton ci-dessus ou utilise le menu contextuel (clic droit) sur un manga.</p>
+            </div>
+          ) : (
+            <div className="mdlist-list">
+              {manualCollections.map((col) => {
+                const mangaIds = col.mangaIds || [];
+                const mangas = mangaIds.map((id) => mangaById[id]).filter(Boolean);
+                return (
+                  <MDListCard
+                    key={col.id}
+                    collection={col}
+                    mangas={mangas}
+                    onOpen={setActiveCollectionId}
+                    onContextMenu={onContextMenu}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
-      <div className="collections-section">
-        <div className="section-header">
-          <h3><SparklesIcon size={18} /> Collections intelligentes</h3>
-        </div>
-        <div className="smart-collection-grid">
+      {activeTab === 'smart' && (
+        <div className="mdlist-list">
           {SMART_COLLECTIONS.map((sc) => {
             const Icon = sc.icon;
             const count = smartCounts[sc.id] ?? 0;
             return (
               <button
                 key={sc.id}
-                className="smart-collection-card"
-                onClick={() => {
-                  const mangas = resolveSmartCollection(allMangas, sc.id, persisted);
-                  if (mangas[0]) onOpenManga(mangas[0].id);
-                }}
+                className="smart-collection-row"
+                onClick={() => setActiveCollectionId(sc.id)}
               >
                 <span className="smart-collection-icon"><Icon size={18} /></span>
                 <div className="smart-collection-copy">
                   <strong>{sc.label}</strong>
-                  <small>{count} manga{count > 1 ? 's' : ''} · {sc.description}</small>
+                  <small>{sc.description}</small>
                 </div>
+                <span className="smart-collection-count">{count}</span>
               </button>
             );
           })}
         </div>
-      </div>
-
-      {manualCollections.length === 0 && (
-        <div className="empty-card">
-          <h3>Aucune collection manuelle</h3>
-          <p>Crée des collections pour organiser tes mangas sans déplacer les fichiers.</p>
-          <div className="detail-actions-row" style={{ marginTop: 16 }}>
-            <button className="primary-button" onClick={() => setShowCreate(true)}>
-              <PlusIcon size={16} /> Créer une collection
-            </button>
-          </div>
-        </div>
       )}
 
       {showCreate && (
-        <CreateCollectionModal
+        <CollectionFormModal
           onClose={() => setShowCreate(false)}
-          onCreateCollection={onCreateCollection}
+          onSubmit={async (data) => {
+            await onCreateCollection(data.name, data.description);
+            setShowCreate(false);
+          }}
         />
       )}
     </section>

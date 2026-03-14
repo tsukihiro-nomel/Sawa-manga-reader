@@ -1,31 +1,25 @@
-import { MoonIcon, SparklesIcon, SunIcon, DatabaseIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon } from './Icons.jsx';
+import { useState } from 'react';
+import { MoonIcon, SparklesIcon, SunIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon } from './Icons.jsx';
 
 const THEMES = [
-  {
-    id: 'dark-night',
-    icon: MoonIcon,
-    title: 'Dark Night',
-    description: 'Noir profond, contraste premium et lumière maîtrisée.'
-  },
-  {
-    id: 'light-paper',
-    icon: SunIcon,
-    title: 'Light Paper',
-    description: "Clair lisible, propre et beaucoup moins cassé qu'avant."
-  },
-  {
-    id: 'coffee-house',
-    icon: SparklesIcon,
-    title: 'Coffee House',
-    description: 'Tons crème, cacao et verre fumé pour une ambiance cosy.'
-  },
-  {
-    id: 'neon-city',
-    icon: SparklesIcon,
-    title: 'Neon City',
-    description: 'Fond encre, cyan électrique et contours glow façon cyberpunk.'
-  }
+  { id: 'dark-night', icon: MoonIcon, title: 'Dark Night', description: 'Noir profond, contraste premium et lumière maîtrisée.' },
+  { id: 'light-paper', icon: SunIcon, title: 'Light Paper', description: "Clair lisible, propre et beaucoup moins cassé qu'avant." },
+  { id: 'coffee-house', icon: SparklesIcon, title: 'Coffee House', description: 'Tons crème, cacao et verre fumé pour une ambiance cosy.' },
+  { id: 'neon-city', icon: SparklesIcon, title: 'Neon City', description: 'Fond encre, cyan électrique et contours glow façon cyberpunk.' }
 ];
+
+const DEFAULT_SHORTCUTS = {
+  nextPage: { label: 'Page suivante', keys: ['ArrowRight'] },
+  prevPage: { label: 'Page précédente', keys: ['ArrowLeft'] },
+  nextChapter: { label: 'Chapitre suivant', keys: ['Ctrl', 'ArrowRight'] },
+  prevChapter: { label: 'Chapitre précédent', keys: ['Ctrl', 'ArrowLeft'] },
+  toggleFullscreen: { label: 'Plein écran', keys: ['F'] },
+  toggleUI: { label: 'Masquer/Afficher l\'UI', keys: ['H'] },
+  zoomIn: { label: 'Zoom +', keys: ['+'] },
+  zoomOut: { label: 'Zoom −', keys: ['-'] },
+  zoomReset: { label: 'Zoom 100%', keys: ['0'] },
+  exitReader: { label: 'Quitter la lecture', keys: ['Escape'] }
+};
 
 function ColorField({ label, value, onChange, helper }) {
   const safeColor = /^#[0-9a-fA-F]{6}$/.test(value || '') ? value : '#8b5cf6';
@@ -33,63 +27,122 @@ function ColorField({ label, value, onChange, helper }) {
     <label className="color-picker-field">
       <span className="color-picker-label">{label}</span>
       <div className="color-picker-control">
-        <input
-          className="color-picker-input"
-          type="color"
-          value={safeColor}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        <input
-          className="color-picker-text"
-          type="text"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder="#8b5cf6"
-          spellCheck={false}
-        />
+        <input className="color-picker-input" type="color" value={safeColor} onChange={(e) => onChange(e.target.value)} />
+        <input className="color-picker-text" type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder="#8b5cf6" spellCheck={false} />
       </div>
       {helper ? <small>{helper}</small> : null}
     </label>
   );
 }
 
+function ShortcutRow({ id, shortcut, customKeys, onRecord }) {
+  const [recording, setRecording] = useState(false);
+  const displayKeys = customKeys || shortcut.keys;
+
+  function startRecording() {
+    setRecording(true);
+    const handler = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const keys = [];
+      if (e.ctrlKey || e.metaKey) keys.push('Ctrl');
+      if (e.shiftKey) keys.push('Shift');
+      if (e.altKey) keys.push('Alt');
+      const key = e.key;
+      if (!['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
+        keys.push(key.length === 1 ? key.toUpperCase() : key);
+      }
+      if (keys.length > 0 && !['Control', 'Shift', 'Alt', 'Meta'].includes(keys[keys.length - 1])) {
+        onRecord(id, keys);
+        setRecording(false);
+        window.removeEventListener('keydown', handler, true);
+      }
+    };
+    window.addEventListener('keydown', handler, true);
+    // Auto-cancel after 5s
+    setTimeout(() => {
+      setRecording(false);
+      window.removeEventListener('keydown', handler, true);
+    }, 5000);
+  }
+
+  return (
+    <div className="shortcut-row">
+      <span className="shortcut-label">{shortcut.label}</span>
+      <div className="shortcut-key-wrap">
+        {displayKeys.map((k, i) => (
+          <span key={i} className={`shortcut-key ${recording ? 'shortcut-recording' : ''}`}>{k}</span>
+        ))}
+        <button className="ghost-button shortcut-edit-btn" onClick={startRecording}>
+          {recording ? '...' : 'Modifier'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsDrawer({ open, ui, onClose, onChange }) {
+  const shortcuts = ui.shortcuts || {};
+
+  async function handleExportSawa() {
+    try {
+      await window.mangaAPI.exportBackup();
+    } catch (err) {
+      console.error('Export failed:', err);
+    }
+  }
+
+  async function handleImportSawa() {
+    try {
+      await window.mangaAPI.importBackup();
+    } catch (err) {
+      console.error('Import failed:', err);
+    }
+  }
+
+  function handleRecordShortcut(id, keys) {
+    const updated = { ...shortcuts, [id]: keys };
+    onChange({ shortcuts: updated });
+  }
+
+  function handleResetShortcuts() {
+    onChange({ shortcuts: {} });
+  }
+
   return (
     <div className={`settings-drawer-backdrop ${open ? 'open' : ''}`} onClick={onClose}>
-      <aside className={`settings-drawer ${open ? 'open' : ''}`} onClick={(event) => event.stopPropagation()}>
+      <aside className={`settings-drawer ${open ? 'open' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <div>
-            <h3>Paramètres avancés</h3>
-            <p>Personnalise les thèmes, les couleurs d'accent, la densité des cartes et le comportement de la bibliothèque.</p>
+            <h3>Paramètres</h3>
+            <p>Personnalise l'apparence, le lecteur, les raccourcis et gère tes données.</p>
           </div>
           <button className="ghost-button" onClick={onClose}>Fermer</button>
         </div>
 
+        {/* ── Thème ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4>Ambiance visuelle</h4>
             <span>Choisis le thème global de l'app.</span>
           </div>
           <div className="theme-grid">
-            {THEMES.map((themeOption) => {
-              const Icon = themeOption.icon;
+            {THEMES.map((t) => {
+              const Icon = t.icon;
               return (
-                <button
-                  key={themeOption.id}
-                  className={`theme-card ${ui.theme === themeOption.id ? 'theme-card-active' : ''}`}
-                  onClick={() => onChange({ theme: themeOption.id })}
-                >
+                <button key={t.id} className={`theme-card ${ui.theme === t.id ? 'theme-card-active' : ''}`} onClick={() => onChange({ theme: t.id })}>
                   <div className="theme-card-topline">
                     <span className="theme-card-icon"><Icon size={16} /></span>
-                    <strong>{themeOption.title}</strong>
+                    <strong>{t.title}</strong>
                   </div>
-                  <p>{themeOption.description}</p>
+                  <p>{t.description}</p>
                 </button>
               );
             })}
           </div>
         </div>
 
+        {/* ── Bibliothèque & Accent ── */}
         <div className="settings-section settings-grid-two">
           <section className="settings-card-block">
             <div className="settings-section-heading">
@@ -98,11 +151,11 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
             </div>
             <label className="settings-toggle">
               <span>Afficher les catégories masquées</span>
-              <input type="checkbox" checked={ui.showHiddenCategories} onChange={(event) => onChange({ showHiddenCategories: event.target.checked })} />
+              <input type="checkbox" checked={ui.showHiddenCategories} onChange={(e) => onChange({ showHiddenCategories: e.target.checked })} />
             </label>
             <label className="settings-toggle">
-              <span>Afficher l'aperçu des pages avant lecture</span>
-              <input type="checkbox" checked={ui.showPagePreviewBeforeReading} onChange={(event) => onChange({ showPagePreviewBeforeReading: event.target.checked })} />
+              <span>Aperçu des pages avant lecture</span>
+              <input type="checkbox" checked={ui.showPagePreviewBeforeReading} onChange={(e) => onChange({ showPagePreviewBeforeReading: e.target.checked })} />
             </label>
             <div className="settings-subsection">
               <h5>Taille des cartes</h5>
@@ -117,23 +170,10 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
           <section className="settings-card-block">
             <div className="settings-section-heading">
               <h4>Accent et détails</h4>
-              <span>Choisis une couleur principale et une couleur secondaire plus perso.</span>
+              <span>Choisis une couleur principale et secondaire.</span>
             </div>
-            <ColorField
-              label="Couleur d'accent"
-              value={ui.accent || '#8b5cf6'}
-              onChange={(accent) => onChange({ accent })}
-              helper="Utilisée pour les boutons actifs, la sélection et les focus."
-            />
-            <ColorField
-              label="Couleur de détail"
-              value={ui.accentAlt || '#38bdf8'}
-              onChange={(accentAlt) => onChange({ accentAlt })}
-              helper="Utilisée pour les dégradés secondaires, les glows et certains effets visuels."
-            />
-            <div className="settings-note">
-              Les couleurs sont sauvegardées localement et restaurées au démarrage. En thème Néon, elles pilotent aussi les contours glow.
-            </div>
+            <ColorField label="Couleur d'accent" value={ui.accent || '#8b5cf6'} onChange={(accent) => onChange({ accent })} helper="Boutons actifs, sélection, focus." />
+            <ColorField label="Couleur de détail" value={ui.accentAlt || '#38bdf8'} onChange={(accentAlt) => onChange({ accentAlt })} helper="Dégradés secondaires, glows." />
           </section>
         </div>
 
@@ -143,7 +183,6 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
             <h4>Lecture</h4>
             <span>Paramètres du lecteur de chapitres.</span>
           </div>
-
           <div className="settings-subsection">
             <h5>Seuil de marquage lu automatique</h5>
             <div className="segmented-control segmented-control-full">
@@ -152,23 +191,19 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
               <button className={ui.readThreshold === 1.0 ? 'active' : ''} onClick={() => onChange({ readThreshold: 1.0 })}>100%</button>
             </div>
           </div>
-
           <label className="settings-toggle">
             <span>Lecture continue</span>
-            <input type="checkbox" checked={!!ui.autoNextChapter} onChange={(event) => onChange({ autoNextChapter: event.target.checked })} />
+            <input type="checkbox" checked={!!ui.autoNextChapter} onChange={(e) => onChange({ autoNextChapter: e.target.checked })} />
           </label>
           <div className="settings-note">Passer automatiquement au chapitre suivant en fin de chapitre.</div>
-
           <label className="settings-toggle">
             <span>Précharger le chapitre suivant</span>
-            <input type="checkbox" checked={!!ui.preloadNextChapter} onChange={(event) => onChange({ preloadNextChapter: event.target.checked })} />
+            <input type="checkbox" checked={!!ui.preloadNextChapter} onChange={(e) => onChange({ preloadNextChapter: e.target.checked })} />
           </label>
-
           <label className="settings-toggle">
             <span>Masquer l'UI après inactivité</span>
-            <input type="checkbox" checked={!!ui.autoHideReaderUI} onChange={(event) => onChange({ autoHideReaderUI: event.target.checked })} />
+            <input type="checkbox" checked={!!ui.autoHideReaderUI} onChange={(e) => onChange({ autoHideReaderUI: e.target.checked })} />
           </label>
-
           <div className="settings-subsection">
             <h5>Direction de lecture par défaut</h5>
             <div className="segmented-control segmented-control-full">
@@ -178,35 +213,76 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
           </div>
         </div>
 
+        {/* ── Raccourcis clavier ── */}
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4><KeyboardIcon size={16} /> Raccourcis clavier</h4>
+            <span>Personnalise les raccourcis du lecteur.</span>
+          </div>
+          <div className="shortcuts-list">
+            {Object.entries(DEFAULT_SHORTCUTS).map(([id, shortcut]) => (
+              <ShortcutRow
+                key={id}
+                id={id}
+                shortcut={shortcut}
+                customKeys={shortcuts[id]}
+                onRecord={handleRecordShortcut}
+              />
+            ))}
+          </div>
+          <button className="ghost-button" onClick={handleResetShortcuts} style={{ marginTop: 8 }}>
+            Réinitialiser les raccourcis
+          </button>
+        </div>
+
         {/* ── Métadonnées en ligne ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4>Métadonnées en ligne</h4>
             <span>Enrichis ta bibliothèque avec des données en ligne.</span>
           </div>
-
           <label className="settings-toggle">
             <span>Activer les métadonnées en ligne</span>
-            <input type="checkbox" checked={!!ui.onlineMetadata} onChange={(event) => onChange({ onlineMetadata: event.target.checked })} />
+            <input type="checkbox" checked={!!ui.onlineMetadata} onChange={(e) => onChange({ onlineMetadata: e.target.checked })} />
           </label>
-          <div className="settings-note">Le logiciel reste entièrement fonctionnel hors ligne. Cette option est purement optionnelle.</div>
-
+          <div className="settings-note">Le logiciel reste entièrement fonctionnel hors ligne.</div>
           {ui.onlineMetadata && (
             <div className="settings-subsection">
               <label className="settings-toggle">
-                <span>Autoriser les couvertures en ligne</span>
-                <input type="checkbox" checked={!!ui.onlineCoverAllowed} onChange={(event) => onChange({ onlineCoverAllowed: event.target.checked })} />
+                <span>Couvertures en ligne</span>
+                <input type="checkbox" checked={!!ui.onlineCoverAllowed} onChange={(e) => onChange({ onlineCoverAllowed: e.target.checked })} />
               </label>
               <label className="settings-toggle">
-                <span>Autoriser les descriptions en ligne</span>
-                <input type="checkbox" checked={!!ui.onlineDescriptionAllowed} onChange={(event) => onChange({ onlineDescriptionAllowed: event.target.checked })} />
+                <span>Descriptions en ligne</span>
+                <input type="checkbox" checked={!!ui.onlineDescriptionAllowed} onChange={(e) => onChange({ onlineDescriptionAllowed: e.target.checked })} />
               </label>
               <label className="settings-toggle">
-                <span>Demander confirmation avant import</span>
-                <input type="checkbox" checked={!!ui.onlineConfirmBeforeImport} onChange={(event) => onChange({ onlineConfirmBeforeImport: event.target.checked })} />
+                <span>Confirmer avant import</span>
+                <input type="checkbox" checked={!!ui.onlineConfirmBeforeImport} onChange={(e) => onChange({ onlineConfirmBeforeImport: e.target.checked })} />
               </label>
             </div>
           )}
+        </div>
+
+        {/* ── Données & Sauvegarde ── */}
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4><HardDriveIcon size={16} /> Données & Sauvegarde</h4>
+            <span>Exporte ou importe tes données au format .sawa pour les transférer entre appareils.</span>
+          </div>
+
+          <div className="settings-grid-two">
+            <button className="ghost-button" onClick={handleExportSawa}>
+              <DownloadIcon size={16} /> Exporter (.sawa)
+            </button>
+            <button className="ghost-button" onClick={handleImportSawa}>
+              <UploadIcon size={16} /> Importer (.sawa)
+            </button>
+          </div>
+          <div className="settings-note">
+            Le fichier .sawa contient ta progression, tes favoris, tes tags, tes collections et tes paramètres.
+            Les fichiers manga eux-mêmes ne sont pas inclus.
+          </div>
         </div>
 
         {/* ── Maintenance ── */}
@@ -215,31 +291,21 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
             <h4>Maintenance</h4>
             <span>Outils de gestion et de diagnostic.</span>
           </div>
-
           <div className="settings-grid-two">
             <button className="ghost-button" onClick={() => onChange({ forceRescan: true })}>
-              <RefreshIcon size={16} /> Forcer un rescan complet
+              <RefreshIcon size={16} /> Rescan complet
             </button>
             <button className="ghost-button" onClick={() => onChange({ clearCache: true })}>
-              <HardDriveIcon size={16} /> Vider le cache images
-            </button>
-            <button className="ghost-button" onClick={() => onChange({ exportBackup: true })}>
-              <DownloadIcon size={16} /> Exporter un backup
-            </button>
-            <button className="ghost-button" onClick={() => onChange({ importBackup: true })}>
-              <UploadIcon size={16} /> Importer un backup
+              <HardDriveIcon size={16} /> Vider le cache
             </button>
           </div>
         </div>
 
         {/* ── À propos ── */}
         <div className="settings-section">
-          <div className="settings-section-heading">
-            <h4>À propos</h4>
-          </div>
+          <div className="settings-section-heading"><h4>À propos</h4></div>
           <div className="settings-note">
-            <strong>Sawa Manga Library v2.0.0</strong>
-            <br />
+            <strong>Sawa Manga Library v2.0.0</strong><br />
             Bibliothèque manga locale, premium, intelligente et entièrement hors ligne.
           </div>
         </div>

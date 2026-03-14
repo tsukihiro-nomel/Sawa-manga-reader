@@ -24,6 +24,9 @@ const MangaCard = memo(function MangaCard({
   const handleFav = useCallback((e) => { e.stopPropagation(); onToggleFavorite(manga.id); }, [manga.id, onToggleFavorite]);
   const handleCtx = useCallback((e) => onContextMenu(e, { type: 'manga', manga }), [manga, onContextMenu]);
 
+  const pct = manga.progressPercent ?? 0;
+  const stateLabel = manga.isRead ? 'Lu' : pct > 0 ? 'En cours' : null;
+
   return (
     <article className="manga-card" onClick={handleClick} onMouseDown={handleMiddleDown} onMouseUp={handleMiddleUp} onContextMenu={handleCtx}>
       <div className="manga-cover-wrap">
@@ -39,26 +42,30 @@ const MangaCard = memo(function MangaCard({
         >
           <HeartIcon size={16} filled={manga.isFavorite} />
         </button>
-        <div className="progress-chip">{manga.progressPercent ?? 0}%</div>
+        {stateLabel && <div className={`manga-card-state ${manga.isRead ? 'manga-card-state-read' : ''}`}>{stateLabel}</div>}
         {manga.hasNewChapters && <div className="new-chapter-chip">Nouveau</div>}
-        {manga.isRead && <div className="read-chip">Lu</div>}
+        {/* Bottom gradient overlay with progress */}
+        <div className="manga-cover-gradient">
+          {pct > 0 && !manga.isRead && (
+            <div className="manga-cover-progress">
+              <span style={{ width: `${pct}%` }} />
+            </div>
+          )}
+        </div>
       </div>
       <div className="manga-card-body">
-        <div className="manga-card-meta-top">
-          <span>{manga.chapterCount} ch{manga.chapterCount > 1 ? '.' : '.'}</span>
-          {manga.author && <span>{manga.author}</span>}
-          <span>{manga.completedChapterCount ?? 0}/{manga.chapterCount} lus</span>
-        </div>
         <h3>{manga.displayTitle}</h3>
+        <div className="manga-card-meta">
+          <span>{manga.chapterCount} ch.</span>
+          {manga.author && <span className="manga-card-author">{manga.author}</span>}
+        </div>
         {manga.tags && manga.tags.length > 0 && (
           <div className="manga-card-tags">
-            {manga.tags.slice(0, 3).map((t) => (
+            {manga.tags.slice(0, 2).map((t) => (
               <span key={t.id} className="manga-tag-pill" style={{ '--tag-color': t.color }}>{t.name}</span>
             ))}
           </div>
         )}
-        <p className="manga-description-clamp">{manga.description || 'Pas de description.'}</p>
-        <div className="progress-line"><span style={{ width: `${manga.progressPercent ?? 0}%` }} /></div>
       </div>
     </article>
   );
@@ -164,7 +171,7 @@ function LibraryView({
   const savingBlockedRef = useRef(false);
 
   // Calculate columns based on container width and card size setting
-  const minCard = cardSize === 'compact' ? 190 : cardSize === 'large' ? 250 : 215;
+  const minCard = cardSize === 'compact' ? 180 : cardSize === 'large' ? 320 : 240;
   const [columns, setColumns] = useState(5);
   useEffect(() => {
     const el = containerRef.current;
