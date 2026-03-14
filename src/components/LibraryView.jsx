@@ -186,15 +186,16 @@ function LibraryView({
     return result;
   }, [mangas, columns]);
 
-  const ROW_HEIGHT = 380;
+  const ROW_HEIGHT = 520;
   const HERO_HEIGHT = showHero && mangas.length > 0 ? 420 : 0;
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => containerRef.current,
     estimateSize: () => ROW_HEIGHT,
-    overscan: 3,
-    paddingStart: HERO_HEIGHT
+    overscan: 4,
+    paddingStart: HERO_HEIGHT,
+    measureElement: (el) => el?.getBoundingClientRect().height ?? ROW_HEIGHT
   });
 
   // Scroll restoration: one-shot, context-aware
@@ -258,13 +259,14 @@ function LibraryView({
           {virtualizer.getVirtualItems().map((vRow) => (
             <div
               key={vRow.key}
+              ref={virtualizer.measureElement}
+              data-index={vRow.index}
               className="manga-grid-row"
               style={{
                 position: 'absolute',
                 top: 0,
                 left: 0,
                 width: '100%',
-                height: `${vRow.size}px`,
                 transform: `translateY(${vRow.start}px)`
               }}
             >

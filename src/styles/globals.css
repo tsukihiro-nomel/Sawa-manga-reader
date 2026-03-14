@@ -3371,3 +3371,285 @@ img { display: block; max-width: 100%; }
   gap: 10px;
   margin: 0;
 }
+
+/* ===== Patch v2.1: unified titlebar, card fixes, online metadata, general polish ===== */
+
+/* Titlebar drag: entire bar is draggable, tabs area is no-drag */
+.titlebar {
+  -webkit-app-region: drag;
+}
+.titlebar-tabs-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+/* Card overlap fix: ensure manga-grid-row doesn't clip */
+.manga-grid-row {
+  align-items: stretch;
+  padding-bottom: 18px;
+}
+.manga-card {
+  display: flex;
+  flex-direction: column;
+}
+.manga-card-body {
+  flex: 1;
+}
+
+/* Progress line in card */
+.progress-line {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  overflow: hidden;
+  margin-top: auto;
+}
+.progress-line span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-alt));
+  transition: width 0.3s ease;
+}
+
+/* New chapter / read chips */
+.new-chapter-chip {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-alt));
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.read-chip {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.85);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Tag pills in card */
+.manga-card-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.manga-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--tag-color, var(--accent)) 18%, transparent);
+  color: var(--tag-color, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--tag-color, var(--accent)) 28%, transparent);
+}
+
+/* Online metadata search modal */
+.modal-panel-wide {
+  max-width: 680px;
+  width: 90vw;
+}
+.online-search-form {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0 8px;
+}
+.online-search-form input {
+  flex: 1;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated-2) 96%, transparent);
+  color: inherit;
+  padding: 0 14px;
+}
+.online-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  margin: 8px 0;
+}
+.online-result-card {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-elevated-2) 92%, transparent);
+}
+.online-result-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+}
+.online-result-cover img {
+  width: 80px;
+  border-radius: 10px;
+  aspect-ratio: 0.72;
+  object-fit: cover;
+}
+.online-result-cover .cover-fallback {
+  width: 80px;
+  border-radius: 10px;
+}
+.online-result-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.online-result-info strong {
+  font-size: 0.95rem;
+}
+.online-result-info small {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+.online-result-info p {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+.online-result-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.online-result-import {
+  align-self: center;
+  white-space: nowrap;
+  height: 36px;
+  font-size: 0.88rem;
+}
+
+/* Collections section header button alignment */
+.collections-view > .section-header {
+  margin-bottom: 8px;
+}
+
+/* Tabsbar scroll buttons: smaller in merged titlebar */
+.tabsbar-scroll {
+  flex-shrink: 0;
+}
+
+/* Reader mode switch polish */
+.reader-mode-switch button {
+  white-space: nowrap;
+}
+
+/* Badge pills */
+.badge-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* Detail cover actions: stack vertically */
+.detail-cover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.detail-cover-actions .ghost-button {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Detail tag pills row */
+.detail-tag-pills,
+.detail-collections {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.detail-tag-add-btn,
+.detail-collection-add-btn {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 0.8rem;
+}
+
+/* Detail dates */
+.detail-dates {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+/* Detail progress bar */
+.detail-progress-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.detail-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.detail-progress-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-alt));
+  transition: width 0.3s ease;
+}
+.detail-progress-label {
+  font-size: 0.82rem;
+  color: var(--text-soft);
+}
+
+/* Detail cover type badge */
+.detail-cover-type-badge {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+/* Hero carousel: fix overflow and spacing */
+.hero-card.hero-card-carousel.hero-card-carousel-spotlight {
+  margin: 0 24px;
+}
+
+/* Content shell overflow fix */
+.content-shell {
+  overflow: auto;
+}
+
+/* Dashboard view */
+.dashboard-view {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 0 24px 24px;
+}

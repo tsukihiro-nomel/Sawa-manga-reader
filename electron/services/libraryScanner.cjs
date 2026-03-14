@@ -256,8 +256,16 @@ function scanManga(mangaPath, persistedState) {
   /* --- Reading state ------------------------------------------------- */
   const readingState = deriveMangaReadingState(mangaId, chapters, persistedState);
 
-  /* --- Cover --------------------------------------------------------- */
-  const { coverSrc, coverType } = resolveCover(metadata, chapters[0]?.previewSrc ?? null);
+  /* --- Cover (hierarchy: user custom > online > auto-detect) --------- */
+  let resolvedCover;
+  if (metadata.coverPath && fs.existsSync(metadata.coverPath)) {
+    resolvedCover = { coverSrc: toFileSrc(metadata.coverPath), coverType: 'custom' };
+  } else if (metadata.onlineCoverPath && fs.existsSync(metadata.onlineCoverPath)) {
+    resolvedCover = { coverSrc: toFileSrc(metadata.onlineCoverPath), coverType: 'online' };
+  } else {
+    resolvedCover = resolveCover(metadata, chapters[0]?.previewSrc ?? null);
+  }
+  const { coverSrc, coverType } = resolvedCover;
 
   /* --- Tags & collections -------------------------------------------- */
   const tags = resolveTagsForManga(mangaId, persistedState);
@@ -274,9 +282,9 @@ function scanManga(mangaPath, persistedState) {
   return {
     id: mangaId,
     name: mangaName,
-    displayTitle: metadata.title?.trim() || mangaName,
-    author: metadata.author?.trim() || '',
-    description: metadata.description?.trim() || '',
+    displayTitle: metadata.title?.trim() || metadata.onlineTitle?.trim() || mangaName,
+    author: metadata.author?.trim() || metadata.onlineAuthor?.trim() || '',
+    description: metadata.description?.trim() || metadata.onlineDescription?.trim() || '',
     path: mangaPath,
     chapterCount: chapters.length,
     completedChapterCount,
