@@ -126,7 +126,7 @@ function LibraryView({
     return result;
   }, [mangas, columns]);
 
-  const ROW_HEIGHT = cardSize === 'compact' ? 440 : cardSize === 'large' ? 580 : 520;
+  const ROW_HEIGHT = cardSize === 'compact' ? 460 : cardSize === 'large' ? 620 : 540;
 
   const virtualizer = useVirtualizer({
     count: rows.length,

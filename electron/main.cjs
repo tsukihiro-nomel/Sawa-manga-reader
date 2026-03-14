@@ -755,6 +755,40 @@ ipcMain.handle('metadata:importOnline', async (_event, mangaId, onlineData) => {
     return state;
   });
 
+  // Auto-import MangaDex genres as tags and assign them to the manga
+  if (Array.isArray(onlineData.genres) && onlineData.genres.length > 0) {
+    const GENRE_COLORS = [
+      '#ef4444', '#f97316', '#eab308', '#22c55e',
+      '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6',
+      '#6366f1', '#f43f5e', '#0ea5e9', '#84cc16',
+    ];
+    const state = loadState();
+    const existingTags = Object.values(state.tags || {});
+
+    for (const genre of onlineData.genres) {
+      const genreName = genre.trim();
+      if (!genreName) continue;
+
+      // Check if a tag with the same name already exists (case-insensitive)
+      let existingTag = existingTags.find((t) => t.name.toLowerCase() === genreName.toLowerCase());
+
+      if (!existingTag) {
+        // Create the tag with a deterministic color based on the genre name
+        let hash = 0;
+        for (let i = 0; i < genreName.length; i++) { hash = ((hash << 5) - hash) + genreName.charCodeAt(i); hash |= 0; }
+        const color = GENRE_COLORS[Math.abs(hash) % GENRE_COLORS.length];
+        createTag(genreName, color);
+        // Re-read state to get the newly created tag
+        const updated = loadState();
+        existingTag = Object.values(updated.tags || {}).find((t) => t.name.toLowerCase() === genreName.toLowerCase());
+      }
+
+      if (existingTag) {
+        addTagToManga(mangaId, existingTag.id);
+      }
+    }
+  }
+
   return buildStatePayload();
 });
 
