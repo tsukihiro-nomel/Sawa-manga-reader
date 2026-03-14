@@ -330,118 +330,120 @@ function MangaDetailView({
                 <ScrollIcon size={16} /> Ch. 1
               </button>
             )}
-            <button className="ghost-button" onClick={onOpenMetadataEditor} title="Éditer les métadonnées">
-              <EditIcon size={14} />
+            <button className="ghost-button" onClick={onOpenMetadataEditor}>
+              <EditIcon size={14} /> Éditer
             </button>
-            <button className="ghost-button" onClick={() => setShowOnlineSearch(true)} title="Rechercher en ligne">
-              <SearchIcon size={14} />
+            <button className="ghost-button" onClick={() => setShowOnlineSearch(true)}>
+              <SearchIcon size={14} /> Métadonnées
             </button>
-            <button className="ghost-button" onClick={() => onPickCover(manga.id)} title="Choisir une couverture">
-              <SparklesIcon size={14} />
+            <button className="ghost-button" onClick={() => onPickCover(manga.id)}>
+              <SparklesIcon size={14} /> Couverture
             </button>
           </div>
         </div>
       </div>
 
-      {/* Info panels — MangaDex-like organized sections */}
+      {/* Info panels — compact 2-column layout */}
       <div className="detail-panels">
-        {/* Description panel */}
-        <div className="detail-panel">
-          <h3 className="detail-panel-title">Description</h3>
-          {manga.description ? (
-            <p className="detail-description">{manga.description}</p>
-          ) : (
-            <p className="detail-description muted-text">Aucune description disponible. Utilise la recherche en ligne pour en importer une.</p>
-          )}
-        </div>
-
-        {/* Information panel */}
-        <div className="detail-panel">
-          <h3 className="detail-panel-title">Informations</h3>
-          <div className="detail-info-grid">
-            <div className="detail-info-item">
-              <span className="detail-info-label">Auteur</span>
-              <span className="detail-info-value">{manga.author || '—'}</span>
-            </div>
-            <div className="detail-info-item">
-              <span className="detail-info-label">Statut</span>
-              <span className="detail-info-value">{getReadingStateLabel(readingState)}</span>
-            </div>
-            <div className="detail-info-item">
-              <span className="detail-info-label">Chapitres</span>
-              <span className="detail-info-value">{totalChapters}</span>
-            </div>
-            <div className="detail-info-item">
-              <span className="detail-info-label">Progression</span>
-              <span className="detail-info-value">{readChapters}/{totalChapters} ({progressPercent}%)</span>
-            </div>
-            {manga.categoryName && (
-              <div className="detail-info-item">
-                <span className="detail-info-label">Catégorie</span>
-                <span className="detail-info-value">{manga.categoryName}</span>
-              </div>
+        {/* Row 1: Description + Informations side by side */}
+        <div className="detail-panels-row">
+          <div className="detail-panel">
+            <h3 className="detail-panel-title">Description</h3>
+            {manga.description ? (
+              <p className="detail-description">{manga.description}</p>
+            ) : (
+              <p className="detail-description muted-text">Aucune description. Utilise la recherche en ligne pour en importer une.</p>
             )}
+          </div>
+
+          <div className="detail-panel">
+            <h3 className="detail-panel-title">Informations</h3>
+            <div className="detail-info-grid">
+              <div className="detail-info-item">
+                <span className="detail-info-label">Auteur</span>
+                <span className="detail-info-value">{manga.author || '—'}</span>
+              </div>
+              <div className="detail-info-item">
+                <span className="detail-info-label">Statut</span>
+                <span className="detail-info-value">{getReadingStateLabel(readingState)}</span>
+              </div>
+              <div className="detail-info-item">
+                <span className="detail-info-label">Chapitres</span>
+                <span className="detail-info-value">{totalChapters}</span>
+              </div>
+              <div className="detail-info-item">
+                <span className="detail-info-label">Progression</span>
+                <span className="detail-info-value">{readChapters}/{totalChapters} ({progressPercent}%)</span>
+              </div>
+              {manga.categoryName && (
+                <div className="detail-info-item">
+                  <span className="detail-info-label">Catégorie</span>
+                  <span className="detail-info-value">{manga.categoryName}</span>
+                </div>
+              )}
+              {manga.addedAt && (
+                <div className="detail-info-item">
+                  <span className="detail-info-label">Ajouté</span>
+                  <span className="detail-info-value">{formatDate(manga.addedAt)}</span>
+                </div>
+              )}
+              {manga.lastReadAt && (
+                <div className="detail-info-item">
+                  <span className="detail-info-label">Lu</span>
+                  <span className="detail-info-value">{formatRelativeDate(manga.lastReadAt)}</span>
+                </div>
+              )}
+            </div>
             {manga.path && (
-              <div className="detail-info-item detail-info-item-full">
+              <div className="detail-info-item" style={{ marginTop: 8 }}>
                 <span className="detail-info-label">Chemin</span>
                 <span className="detail-info-value detail-info-path">{manga.path}</span>
-              </div>
-            )}
-            {manga.addedAt && (
-              <div className="detail-info-item">
-                <span className="detail-info-label">Ajouté le</span>
-                <span className="detail-info-value">{formatDate(manga.addedAt)}</span>
-              </div>
-            )}
-            {manga.lastReadAt && (
-              <div className="detail-info-item">
-                <span className="detail-info-label">Dernière lecture</span>
-                <span className="detail-info-value">{formatRelativeDate(manga.lastReadAt)}</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Tags panel */}
-        <div className="detail-panel">
-          <h3 className="detail-panel-title">
-            <TagIcon size={16} /> Tags
-            {onAddTag && (
-              <button className="ghost-button detail-panel-action" onClick={() => onAddTag(manga.id)} title="Gérer les tags">
-                <PlusIcon size={14} />
-              </button>
+        {/* Row 2: Tags + Collections side by side */}
+        <div className="detail-panels-row">
+          <div className="detail-panel">
+            <h3 className="detail-panel-title">
+              <TagIcon size={16} /> Tags
+              {onAddTag && (
+                <button className="ghost-button detail-panel-action" onClick={() => onAddTag(manga.id)}>
+                  <PlusIcon size={14} /> Gérer
+                </button>
+              )}
+            </h3>
+            {manga.tags?.length > 0 ? (
+              <div className="detail-tag-pills">
+                {manga.tags.map((tag) => (
+                  <span key={tag.id} className="manga-tag-pill" style={{ '--tag-color': tag.color }}>{tag.name}</span>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-text" style={{ margin: 0, fontSize: '0.85rem' }}>Aucun tag.</p>
             )}
-          </h3>
-          {manga.tags?.length > 0 ? (
-            <div className="detail-tag-pills">
-              {manga.tags.map((tag) => (
-                <span key={tag.id} className="manga-tag-pill" style={{ '--tag-color': tag.color }}>{tag.name}</span>
-              ))}
-            </div>
-          ) : (
-            <p className="muted-text" style={{ margin: 0, fontSize: '0.88rem' }}>Aucun tag. Ajoute-en depuis le bouton ci-dessus.</p>
-          )}
-        </div>
+          </div>
 
-        {/* Collections panel */}
-        <div className="detail-panel">
-          <h3 className="detail-panel-title">
-            <LayersIcon size={16} /> Collections
-            {onAddToCollection && (
-              <button className="ghost-button detail-panel-action" onClick={() => onAddToCollection(manga.id)} title="Gérer les collections">
-                <PlusIcon size={14} />
-              </button>
+          <div className="detail-panel">
+            <h3 className="detail-panel-title">
+              <LayersIcon size={16} /> Collections
+              {onAddToCollection && (
+                <button className="ghost-button detail-panel-action" onClick={() => onAddToCollection(manga.id)}>
+                  <PlusIcon size={14} /> Gérer
+                </button>
+              )}
+            </h3>
+            {mangaCollections.length > 0 ? (
+              <div className="detail-collections-list">
+                {mangaCollections.map((col) => (
+                  <span key={col.id} className="badge-pill badge-pill-collection">{col.name}</span>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-text" style={{ margin: 0, fontSize: '0.85rem' }}>Aucune collection.</p>
             )}
-          </h3>
-          {mangaCollections.length > 0 ? (
-            <div className="detail-collections-list">
-              {mangaCollections.map((col) => (
-                <span key={col.id} className="badge-pill badge-pill-collection">{col.name}</span>
-              ))}
-            </div>
-          ) : (
-            <p className="muted-text" style={{ margin: 0, fontSize: '0.88rem' }}>Ce manga n'appartient à aucune collection.</p>
-          )}
+          </div>
         </div>
       </div>
 

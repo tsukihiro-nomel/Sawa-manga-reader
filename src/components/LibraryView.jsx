@@ -136,47 +136,34 @@ function LibraryView({
     measureElement: (el) => el?.getBoundingClientRect().height ?? ROW_HEIGHT
   });
 
-  // Scroll restoration: multi-attempt with ResizeObserver, user interaction cancels
+  // Scroll restoration using virtualizer.scrollToOffset for accuracy
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el || !initialScrollTop) return;
     restoredRef.current = false;
     savingBlockedRef.current = true;
-    let userInteracted = false;
+
+    // Use the virtualizer's own scroll method for precise positioning
+    virtualizer.scrollToOffset(initialScrollTop, { align: 'start' });
 
     const apply = () => {
-      if (restoredRef.current || userInteracted) return;
-      if (el.scrollHeight >= initialScrollTop + 10) {
-        el.scrollTo({ top: initialScrollTop, behavior: 'auto' });
-        if (Math.abs(el.scrollTop - initialScrollTop) < 5) {
-          restoredRef.current = true;
-          setTimeout(() => { savingBlockedRef.current = false; }, 150);
-        }
+      if (restoredRef.current) return;
+      virtualizer.scrollToOffset(initialScrollTop, { align: 'start' });
+      // Also set scrollTop directly as fallback
+      if (el.scrollHeight > initialScrollTop) {
+        el.scrollTop = initialScrollTop;
+      }
+      if (Math.abs(el.scrollTop - initialScrollTop) < 10) {
+        restoredRef.current = true;
       }
     };
 
-    const stopRestoring = () => {
-      userInteracted = true;
-      savingBlockedRef.current = false;
-    };
-
-    const interactionEvents = ['wheel', 'touchstart', 'pointerdown', 'mousedown'];
-    interactionEvents.forEach((evt) => el.addEventListener(evt, stopRestoring, { passive: true }));
-
-    apply();
     const raf1 = requestAnimationFrame(apply);
     const raf2 = requestAnimationFrame(() => requestAnimationFrame(apply));
-    const t1 = setTimeout(apply, 50);
-    const t2 = setTimeout(apply, 120);
-    const t3 = setTimeout(apply, 250);
-    const t4 = setTimeout(() => { apply(); savingBlockedRef.current = false; }, 400);
-
-    let observer;
-    if (typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(() => apply());
-      observer.observe(el);
-      setTimeout(() => observer?.disconnect(), 500);
-    }
+    const t1 = setTimeout(apply, 30);
+    const t2 = setTimeout(apply, 80);
+    const t3 = setTimeout(apply, 160);
+    const t4 = setTimeout(() => { apply(); savingBlockedRef.current = false; }, 300);
 
     return () => {
       cancelAnimationFrame(raf1);
@@ -185,11 +172,9 @@ function LibraryView({
       clearTimeout(t2);
       clearTimeout(t3);
       clearTimeout(t4);
-      observer?.disconnect();
-      interactionEvents.forEach((evt) => el.removeEventListener(evt, stopRestoring));
       savingBlockedRef.current = false;
     };
-  }, [scrollKey, initialScrollTop]);
+  }, [scrollKey, initialScrollTop, virtualizer]);
 
   // Save scroll position on scroll
   const handleScroll = useCallback(() => {

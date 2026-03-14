@@ -2,9 +2,9 @@ import { memo, useCallback } from 'react';
 import { HeartIcon } from './Icons.jsx';
 
 /**
- * Unified MangaCard — overlay-on-cover style.
- * Title, meta, tags and progress are overlaid on the cover via a gradient.
- * Used consistently across Library, Dashboard, and Collection detail views.
+ * Unified MangaCard — premium overlay-on-cover style.
+ * Large cover image with a strong gradient overlay at the bottom.
+ * Title, meta, tags overlaid on the gradient. Glass-like border glow on hover.
  */
 const MangaCard = memo(function MangaCard({
   manga,
@@ -30,66 +30,74 @@ const MangaCard = memo(function MangaCard({
 
   return (
     <article
-      className={`manga-card manga-card-overlay ${compact ? 'manga-card-compact' : ''}`}
+      className={`mc ${compact ? 'mc-compact' : ''}`}
       onClick={handleClick}
       onMouseDown={handleMiddleDown}
       onMouseUp={handleMiddleUp}
       onContextMenu={handleCtx}
     >
-      <div className="manga-cover-wrap">
+      {/* Cover image */}
+      <div className="mc-cover">
         {manga.coverSrc
-          ? <img className="manga-cover" src={manga.coverSrc} alt={manga.displayTitle} loading="lazy" />
-          : <div className="cover-fallback">{(manga.displayTitle || '?')[0]}</div>
+          ? <img src={manga.coverSrc} alt={manga.displayTitle} loading="lazy" draggable={false} />
+          : <div className="mc-cover-fallback">{(manga.displayTitle || '?')[0]}</div>
         }
+      </div>
 
-        {/* Top-left badges */}
+      {/* Top badges row */}
+      <div className="mc-badges">
         {stateLabel && (
-          <div className={`manga-card-badge manga-card-badge-state ${manga.isRead ? 'manga-card-badge-read' : ''}`}>
+          <span className={`mc-badge ${manga.isRead ? 'mc-badge-read' : 'mc-badge-progress'}`}>
             {stateLabel}
+          </span>
+        )}
+        {manga.hasNewChapters && (
+          <span className="mc-badge mc-badge-new">Nouveau</span>
+        )}
+      </div>
+
+      {/* Favorite heart */}
+      {onToggleFavorite && (
+        <button
+          className={`mc-fav ${manga.isFavorite ? 'mc-fav-active' : ''}`}
+          onClick={handleFav}
+          title={manga.isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+        >
+          <HeartIcon size={14} filled={manga.isFavorite} />
+        </button>
+      )}
+
+      {/* Bottom overlay */}
+      <div className="mc-overlay">
+        {/* Progress bar */}
+        {pct > 0 && !manga.isRead && (
+          <div className="mc-progress">
+            <div className="mc-progress-fill" style={{ width: `${pct}%` }} />
           </div>
         )}
-        {manga.hasNewChapters && !stateLabel && (
-          <div className="manga-card-badge manga-card-badge-new">Nouveau</div>
+
+        <h3 className="mc-title" title={manga.displayTitle}>{manga.displayTitle}</h3>
+
+        {!compact && (
+          <p className="mc-meta">
+            {manga.chapterCount} ch.
+            {manga.author ? ` · ${manga.author}` : ''}
+            {pct > 0 ? ` · ${pct}%` : ''}
+          </p>
         )}
-        {manga.hasNewChapters && stateLabel && (
-          <div className="manga-card-badge manga-card-badge-new manga-card-badge-new-offset">Nouveau</div>
+        {compact && (
+          <p className="mc-meta">
+            {manga.chapterCount} ch.{pct > 0 ? ` · ${pct}%` : ''}
+          </p>
         )}
 
-        {/* Favorite button top-right */}
-        {onToggleFavorite && (
-          <button
-            className={`favorite-toggle ${manga.isFavorite ? 'favorite-toggle-active' : ''}`}
-            onClick={handleFav}
-            title={manga.isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-          >
-            <HeartIcon size={14} filled={manga.isFavorite} />
-          </button>
-        )}
-
-        {/* Bottom gradient overlay with info */}
-        <div className="manga-card-overlay-info">
-          <div className="manga-card-overlay-content">
-            <h3 title={manga.displayTitle}>{manga.displayTitle}</h3>
-            <div className="manga-card-overlay-meta">
-              <span>{manga.chapterCount} ch.</span>
-              {manga.author && <span>{manga.author}</span>}
-              {pct > 0 && <span>{pct}%</span>}
-            </div>
-            {!compact && manga.tags && manga.tags.length > 0 && (
-              <div className="manga-card-overlay-tags">
-                {manga.tags.slice(0, 3).map((t) => (
-                  <span key={t.id} className="manga-tag-pill" style={{ '--tag-color': t.color }}>{t.name}</span>
-                ))}
-              </div>
-            )}
+        {!compact && manga.tags && manga.tags.length > 0 && (
+          <div className="mc-tags">
+            {manga.tags.slice(0, 3).map((t) => (
+              <span key={t.id} className="mc-tag" style={{ '--tc': t.color || 'var(--accent)' }}>{t.name}</span>
+            ))}
           </div>
-          {/* Progress bar at very bottom of overlay */}
-          {pct > 0 && !manga.isRead && (
-            <div className="manga-card-overlay-progress">
-              <span style={{ width: `${pct}%` }} />
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </article>
   );

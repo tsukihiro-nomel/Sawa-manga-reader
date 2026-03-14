@@ -33,8 +33,13 @@ function CollectionFormModal({ onClose, onSubmit, initial }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-        <h3>{initial ? 'Modifier la collection' : 'Nouvelle collection'}</h3>
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+        <div className="tag-modal-header" style={{ marginBottom: 12 }}>
+          <div className="tag-modal-title">
+            <div className="tag-modal-icon"><LayersIcon size={20} /></div>
+            <h3 style={{ margin: 0 }}>{initial ? 'Modifier la collection' : 'Nouvelle collection'}</h3>
+          </div>
+        </div>
         <form onSubmit={handleSubmit}>
           <label>
             Nom de la collection

@@ -672,7 +672,8 @@ img { display: block; max-width: 100%; }
   padding: 0 0 18px;
   align-items: start;
 }
-.manga-grid-row > .manga-card {
+.manga-grid-row > .manga-card,
+.manga-grid-row > .mc {
   flex: 1 1 0;
   min-width: 0;
   max-width: 100%;
@@ -1028,7 +1029,7 @@ img { display: block; max-width: 100%; }
   min-height: 0;
   flex: 1;
   border: 1px solid var(--border);
-  border-radius: 28px;
+  border-radius: 0;
   background: rgba(7, 10, 16, 0.78);
   box-shadow: var(--shadow);
   overflow: hidden;
@@ -1068,10 +1069,10 @@ img { display: block; max-width: 100%; }
   max-width: min(100%, 980px);
   max-height: none;
   object-fit: contain;
-  border-radius: 18px;
+  border-radius: 0;
 }
 .reader-page-double {
-  max-width: calc(50% - 9px);
+  max-width: 50%;
 }
 .webtoon-stage {
   overflow: auto;
@@ -2860,10 +2861,9 @@ img { display: block; max-width: 100%; }
   box-shadow: var(--shadow);
   backdrop-filter: blur(26px);
   padding: 32px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 28px;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .dash-hero-content {
@@ -3405,10 +3405,11 @@ img { display: block; max-width: 100%; }
 
 /* Card overlap fix: ensure manga-grid-row doesn't clip */
 .manga-grid-row {
-  align-items: stretch;
+  align-items: start;
   padding-bottom: 18px;
 }
-.manga-card {
+.manga-card,
+.mc {
   display: flex;
   flex-direction: column;
 }
@@ -3826,11 +3827,19 @@ img { display: block; max-width: 100%; }
 .detail-panels {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-top: 20px;
+  gap: 14px;
+  margin-top: 18px;
+}
+.detail-panels-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 900px) {
+  .detail-panels-row { grid-template-columns: 1fr; }
 }
 .detail-panel {
-  padding: 18px 20px;
+  padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
@@ -4241,140 +4250,225 @@ img { display: block; max-width: 100%; }
   50% { opacity: 0.5; }
 }
 
-/* ===== Overlay-style Manga Card ===== */
-.manga-card.manga-card-overlay {
+/* ===== Premium Manga Card (.mc) ===== */
+.mc {
   position: relative;
+  border-radius: 18px;
   overflow: hidden;
-  border-radius: 16px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--bg-elevated-2) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-soft) 8%, transparent);
+  box-shadow:
+    0 2px 8px rgba(0,0,0,0.10),
+    0 8px 32px rgba(0,0,0,0.08);
+  transition: transform 0.28s cubic-bezier(.22,1,.36,1), box-shadow 0.28s ease, border-color 0.28s ease;
+  will-change: transform;
+  contain: layout paint;
 }
-.manga-card.manga-card-overlay .manga-cover-wrap {
-  position: relative;
-  width: 100%;
+.mc:hover {
+  transform: translateY(-6px) scale(1.015);
+  border-color: color-mix(in srgb, var(--accent) 50%, rgba(255,255,255,0.12));
+  box-shadow:
+    0 4px 12px rgba(0,0,0,0.12),
+    0 20px 60px rgba(0,0,0,0.18),
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.manga-card.manga-card-overlay .manga-cover {
-  width: 100%;
-  aspect-ratio: 0.7;
-  object-fit: cover;
-  display: block;
-}
-.manga-card.manga-card-overlay .cover-fallback {
-  aspect-ratio: 0.7;
-}
-.manga-card.manga-card-overlay .manga-card-body {
-  display: none;
+.mc:active {
+  transform: translateY(-2px) scale(1.005);
+  transition-duration: 0.1s;
 }
 
-/* Badge positioning */
-.manga-card-badge {
+/* Cover */
+.mc-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 0.68;
+  overflow: hidden;
+}
+.mc-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s cubic-bezier(.22,1,.36,1);
+}
+.mc:hover .mc-cover img {
+  transform: scale(1.04);
+}
+.mc-cover-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font-size: 2.8rem;
+  font-weight: 800;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 55%, #1a1a2e), color-mix(in srgb, var(--accent-alt) 35%, #0f0f1a));
+  color: rgba(255,255,255,0.6);
+}
+
+/* Top badges */
+.mc-badges {
   position: absolute;
   top: 10px;
   left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  z-index: 3;
+}
+.mc-badge {
   padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 0.7rem;
+  border-radius: 8px;
+  font-size: 0.68rem;
   font-weight: 700;
+  letter-spacing: 0.02em;
   color: white;
-  backdrop-filter: blur(8px);
-  z-index: 2;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.12);
 }
-.manga-card-badge-state {
-  background: color-mix(in srgb, var(--accent) 85%, black);
+.mc-badge-progress {
+  background: color-mix(in srgb, var(--accent) 78%, rgba(0,0,0,0.4));
 }
-.manga-card-badge-read {
-  background: rgba(16, 185, 129, 0.88);
+.mc-badge-read {
+  background: rgba(16, 185, 129, 0.82);
 }
-.manga-card-badge-new {
+.mc-badge-new {
   background: linear-gradient(135deg, var(--accent), var(--accent-alt));
-}
-.manga-card-badge-new-offset {
-  top: 36px;
+  border-color: rgba(255,255,255,0.2);
 }
 
-/* Overlay info at bottom */
-.manga-card-overlay-info {
+/* Favorite heart */
+.mc-fav {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: white;
+  display: grid;
+  place-items: center;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+  cursor: pointer;
+}
+.mc-fav:hover {
+  background: rgba(0,0,0,0.55);
+  border-color: rgba(255,255,255,0.25);
+  transform: scale(1.1);
+}
+.mc-fav-active {
+  background: color-mix(in srgb, var(--accent) 55%, rgba(0,0,0,0.4));
+  border-color: color-mix(in srgb, var(--accent) 50%, rgba(255,255,255,0.15));
+  color: #fff;
+}
+
+/* Bottom overlay gradient + info */
+.mc-overlay {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.6) 50%, transparent 100%);
-  padding: 48px 12px 10px;
+  z-index: 2;
+  padding: 52px 14px 14px;
+  background: linear-gradient(
+    to top,
+    rgba(8,10,18,0.92) 0%,
+    rgba(8,10,18,0.78) 35%,
+    rgba(8,10,18,0.35) 65%,
+    transparent 100%
+  );
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  z-index: 1;
+  gap: 5px;
 }
-.manga-card-overlay-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.manga-card-overlay-content h3 {
+
+/* Title */
+.mc-title {
   margin: 0;
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  line-height: 1.25;
-  color: white;
+  line-height: 1.28;
+  color: #fff;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-.manga-card-overlay-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
-  color: rgba(255,255,255,0.72);
-}
-.manga-card-overlay-meta > span:not(:last-child)::after {
-  content: '·';
-  margin-left: 6px;
-}
-.manga-card-overlay-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
-.manga-card-overlay-tags .manga-tag-pill {
-  font-size: 0.65rem;
-  padding: 2px 7px;
-  background: rgba(255,255,255,0.14);
-  border-color: rgba(255,255,255,0.2);
-  color: rgba(255,255,255,0.85);
+  text-shadow: 0 1px 4px rgba(0,0,0,0.4);
 }
 
-/* Overlay progress bar */
-.manga-card-overlay-progress {
+/* Meta line */
+.mc-meta {
+  margin: 0;
+  font-size: 0.76rem;
+  color: rgba(255,255,255,0.62);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tags row */
+.mc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 3px;
+}
+.mc-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(255,255,255,0.88);
+  background: color-mix(in srgb, var(--tc, var(--accent)) 30%, rgba(255,255,255,0.08));
+  border: 1px solid color-mix(in srgb, var(--tc, var(--accent)) 25%, rgba(255,255,255,0.1));
+  backdrop-filter: blur(6px);
+}
+
+/* Progress bar */
+.mc-progress {
   width: 100%;
   height: 3px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.15);
   overflow: hidden;
+  margin-bottom: 4px;
 }
-.manga-card-overlay-progress span {
-  display: block;
+.mc-progress-fill {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--accent), var(--accent-alt));
+  transition: width 0.3s ease;
 }
 
-/* Favorite toggle on overlay cards */
-.manga-card.manga-card-overlay .favorite-toggle {
-  width: 32px;
-  height: 32px;
-  top: 10px;
-  right: 10px;
-  z-index: 3;
-}
-
-/* Compact variant for dashboard */
-.manga-card-compact .manga-card-overlay-content h3 {
+/* Compact variant (dashboard) */
+.mc-compact .mc-title {
   font-size: 0.85rem;
   -webkit-line-clamp: 1;
 }
-.manga-card-compact .manga-card-overlay-meta {
+.mc-compact .mc-meta {
   font-size: 0.7rem;
+}
+.mc-compact .mc-overlay {
+  padding: 40px 10px 10px;
+}
+.mc-compact .mc-fav {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+.mc-compact .mc-badge {
+  font-size: 0.6rem;
+  padding: 2px 7px;
 }
 
 /* ===== Collection manga grid (replaces list rows) ===== */
@@ -4382,52 +4476,6 @@ img { display: block; max-width: 100%; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 18px;
-}
-
-/* ===== Collection Picker Modal ===== */
-.collection-picker-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 320px;
-  overflow-y: auto;
-  padding: 4px 0;
-}
-.collection-picker-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
-  cursor: pointer;
-  transition: 0.15s ease;
-}
-.collection-picker-item:hover {
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-elevated));
-}
-.collection-picker-item input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent);
-}
-.collection-picker-item span {
-  flex: 1;
-  font-weight: 600;
-}
-.collection-picker-item small {
-  font-size: 0.8rem;
-}
-.collection-picker-create {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-top: 8px;
-}
-.collection-picker-create input {
-  flex: 1;
 }
 
 /* ===== Dashboard Overhaul ===== */
@@ -4557,9 +4605,272 @@ img { display: block; max-width: 100%; }
   height: 34px !important;
 }
 
-/* Dashboard section grid — horizontal scroll of cards */
+/* Dashboard section grid */
 .dash-section-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 14px;
+}
+
+/* ===== Tag Manager Modal (premium) ===== */
+.tag-modal {
+  max-width: 480px;
+  width: 100%;
+}
+.tag-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.tag-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tag-modal-title h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.tag-modal-title p {
+  margin: 0;
+  font-size: 0.82rem;
+}
+.tag-modal-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.tag-modal-section {
+  margin-bottom: 16px;
+}
+.tag-modal-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-soft);
+  margin-bottom: 10px;
+}
+.tag-modal-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Tag chip (modern pill) */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--tc, var(--accent)) 25%, var(--border));
+  background: color-mix(in srgb, var(--tc, var(--accent)) 8%, var(--bg-elevated));
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.tag-chip:hover {
+  border-color: color-mix(in srgb, var(--tc, var(--accent)) 50%, var(--border));
+  background: color-mix(in srgb, var(--tc, var(--accent)) 16%, var(--bg-elevated));
+  transform: translateY(-1px);
+}
+.tag-chip-active {
+  border-color: var(--tc, var(--accent));
+  background: color-mix(in srgb, var(--tc, var(--accent)) 22%, var(--bg-elevated));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tc, var(--accent)) 15%, transparent);
+}
+.tag-chip-delete {
+  background: none;
+  border: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+}
+.tag-chip-delete:hover {
+  opacity: 1;
+  color: #ef4444;
+}
+
+/* Create tag trigger */
+.tag-create-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.tag-create-trigger:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* Create tag form */
+.tag-create-form {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+}
+.tag-create-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tag-create-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+  transition: border-color 0.2s;
+}
+.tag-create-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.tag-color-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tag-color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.tag-color-dot:hover {
+  transform: scale(1.15);
+}
+.tag-color-dot-active {
+  border-color: white;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.3);
+  transform: scale(1.15);
+}
+.tag-create-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* ===== Collection Picker Modal (premium) ===== */
+.collection-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.collection-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.collection-picker-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-elevated));
+  transform: translateY(-1px);
+}
+.collection-picker-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.collection-picker-item span {
+  flex: 1;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.collection-picker-item small {
+  font-size: 0.78rem;
+}
+.collection-picker-create {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.collection-picker-create input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.collection-picker-create input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ===== Collection Form Modal (premium) ===== */
+.modal-panel form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal-panel form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.modal-panel form input,
+.modal-panel form textarea {
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+  transition: border-color 0.2s;
+}
+.modal-panel form input:focus,
+.modal-panel form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.modal-panel form textarea {
+  resize: vertical;
+  min-height: 80px;
 }

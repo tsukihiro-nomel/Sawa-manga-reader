@@ -609,23 +609,57 @@ ipcMain.handle('metadata:searchOnline', async (_event, query) => {
   if (!query || !query.trim()) return { results: [] };
   try {
     const encoded = encodeURIComponent(query.trim());
-    const response = await net.fetch(`https://api.jikan.moe/v4/manga?q=${encoded}&limit=8&sfw=true`);
+    // Use MangaDex API (free, no auth required, comprehensive manga database)
+    const response = await net.fetch(
+      `https://api.mangadex.org/manga?title=${encoded}&limit=10&includes[]=cover_art&includes[]=author&includes[]=artist&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&order[relevance]=desc`,
+      { headers: { 'Accept': 'application/json' } }
+    );
     if (!response.ok) return { results: [], error: `HTTP ${response.status}` };
     const json = await response.json();
-    const results = (json.data || []).map((item) => ({
-      malId: item.mal_id,
-      title: item.title,
-      titleJapanese: item.title_japanese,
-      titleEnglish: item.title_english,
-      synopsis: item.synopsis,
-      authors: (item.authors || []).map((a) => a.name).join(', '),
-      genres: (item.genres || []).map((g) => g.name),
-      coverUrl: item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || null,
-      score: item.score,
-      status: item.status,
-      chapters: item.chapters,
-      volumes: item.volumes
-    }));
+    const results = (json.data || []).map((item) => {
+      const attr = item.attributes || {};
+      // Extract title (prefer en, then ja-ro, then first available)
+      const titleMap = attr.title || {};
+      const title = titleMap.en || titleMap['ja-ro'] || titleMap.ja || Object.values(titleMap)[0] || 'Sans titre';
+      // Alt titles
+      const altTitles = (attr.altTitles || []).map((t) => Object.values(t)[0]).filter(Boolean);
+      const titleJapanese = altTitles.find((t) => /[\u3000-\u9fff\uf900-\ufaff]/.test(t)) || null;
+      // Description
+      const descMap = attr.description || {};
+      const synopsis = descMap.fr || descMap.en || Object.values(descMap)[0] || null;
+      // Authors/artists
+      const authors = (item.relationships || [])
+        .filter((r) => r.type === 'author' || r.type === 'artist')
+        .map((r) => r.attributes?.name)
+        .filter(Boolean);
+      const uniqueAuthors = [...new Set(authors)].join(', ');
+      // Tags/genres
+      const genres = (attr.tags || [])
+        .filter((t) => t.attributes?.group === 'genre')
+        .map((t) => t.attributes?.name?.en || Object.values(t.attributes?.name || {})[0])
+        .filter(Boolean);
+      // Cover art
+      const coverRel = (item.relationships || []).find((r) => r.type === 'cover_art');
+      const coverFileName = coverRel?.attributes?.fileName || null;
+      const coverUrl = coverFileName ? `https://uploads.mangadex.org/covers/${item.id}/${coverFileName}.512.jpg` : null;
+      return {
+        malId: item.id, // Using MangaDex ID as the unique identifier
+        mangaDexId: item.id,
+        title,
+        titleJapanese,
+        titleEnglish: titleMap.en || null,
+        synopsis,
+        authors: uniqueAuthors,
+        genres,
+        coverUrl,
+        score: attr.rating?.bayesian ? Math.round(attr.rating.bayesian * 10) / 10 : null,
+        status: attr.status,
+        chapters: attr.lastChapter ? parseInt(attr.lastChapter, 10) : null,
+        volumes: attr.lastVolume ? parseInt(attr.lastVolume, 10) : null,
+        year: attr.year,
+        contentRating: attr.contentRating
+      };
+    });
     return { results };
   } catch (error) {
     return { results: [], error: error?.message || 'Network error' };
