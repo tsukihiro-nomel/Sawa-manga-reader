@@ -159,6 +159,8 @@ export default function App() {
   const [editingMetadata, setEditingMetadata] = useState(null);
   const [tagManagerManga, setTagManagerManga] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [collectionPickerManga, setCollectionPickerManga] = useState(null);
+  const [metadataSearchManga, setMetadataSearchManga] = useState(null);
   const [chapterPagesCache, setChapterPagesCache] = useState({});
   const [bootError, setBootError] = useState('');
   const scrollPositionsRef = useRef({});
@@ -232,7 +234,7 @@ export default function App() {
   const activeScrollKey = useMemo(() => makeViewScrollKey(activeTab?.id || 'tab', activeView, activeScreen, selectedCategoryId), [activeTab?.id, activeView, activeScreen, selectedCategoryId]);
   const activeInitialScrollTop = scrollPositionsRef.current[activeScrollKey] ?? 0;
   const captureCurrentViewScroll = useCallback(() => {
-    const currentScrollable = document.querySelector('.library-view, .detail-view, .preview-view');
+    const currentScrollable = document.querySelector('.library-view, .detail-view, .preview-view, .dashboard-view, .collections-view');
     if (currentScrollable) {
       scrollPositionsRef.current[activeScrollKey] = currentScrollable.scrollTop || 0;
     }
@@ -795,42 +797,13 @@ export default function App() {
         actionItem('Gérer les tags', () => setTagManagerManga(context.manga), { icon: <TagIcon size={14} /> }),
         actionItem('Éditer les métadonnées', () => setEditingMetadata(context.manga), { icon: <EditIcon size={14} /> }),
         actionItem('Rechercher les métadonnées en ligne', () => {
-          openMangaInCurrentTab(context.manga.id);
-          // The online search modal will be triggered from the detail view
+          setMetadataSearchManga(context.manga);
         }, { icon: <SearchIcon size={14} /> }),
-        actionItem('Choisir une couverture', () => handlePickCover(context.manga.id), { icon: <SparklesIcon size={14} /> })
-      );
-      // Collection sub-items
-      if (collections.length > 0) {
-        items.push(separatorItem());
-        collections.forEach((col) => {
-          const isInCol = (col.mangaIds || []).includes(context.manga.id);
-          items.push(
-            actionItem(
-              isInCol ? `✓ ${col.name}` : col.name,
-              () => {
-                if (isInCol) {
-                  handleRemoveMangaFromCollection(col.id, context.manga.id);
-                } else {
-                  handleAddToCollection(context.manga.id, col.id);
-                }
-              },
-              { icon: <LayersIcon size={14} /> }
-            )
-          );
-        });
-      }
-      items.push(
+        actionItem('Choisir une couverture', () => handlePickCover(context.manga.id), { icon: <SparklesIcon size={14} /> }),
         separatorItem(),
-        actionItem('Nouvelle collection avec ce manga', async () => {
-          await handleCreateCollection(context.manga.displayTitle, '');
-          // Add manga to the newly created collection
-          const updated = await window.mangaAPI.bootstrap();
-          const newCols = Object.values(updated?.persisted?.collections ?? {});
-          const newest = newCols.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
-          if (newest) await handleAddToCollection(context.manga.id, newest.id);
-          refreshWith(window.mangaAPI.bootstrap());
-        }, { icon: <PlusIcon size={14} /> }),
+        actionItem('Gérer les collections', () => {
+          setCollectionPickerManga(context.manga);
+        }, { icon: <LayersIcon size={14} /> }),
         separatorItem(),
         actionItem('Réinitialiser la progression', () => handleResetProgress(context.manga.id, context.manga.chapters.map((chapter) => chapter.id)), {
           icon: <TrashIcon size={14} />,
@@ -981,14 +954,20 @@ export default function App() {
               favorites={library.favorites}
               persisted={payload?.persisted ?? {}}
               onOpenManga={openMangaInCurrentTab}
+              onToggleFavorite={handleToggleFavorite}
               onNavigateTo={(target) => {
                 if (target === 'library') {
                   setActiveScreen('library');
+                } else if (target === 'collections') {
+                  setActiveScreen('collections');
+                } else if (target === 'favorites') {
+                  setActiveScreen('favorites');
                 } else {
                   setActiveScreen('library');
                 }
               }}
               onContextMenu={openContextMenu}
+              onOpenSettings={() => setSettingsOpen(true)}
             />
           )}
 
@@ -997,6 +976,7 @@ export default function App() {
               allMangas={library.allMangas}
               persisted={payload?.persisted ?? {}}
               onOpenManga={openMangaInCurrentTab}
+              onToggleFavorite={handleToggleFavorite}
               onCreateCollection={handleCreateCollection}
               onDeleteCollection={handleDeleteCollection}
               onUpdateCollection={handleUpdateCollection}
@@ -1131,7 +1111,167 @@ export default function App() {
         />
       )}
 
+      {collectionPickerManga && (
+        <CollectionPickerModal
+          manga={collectionPickerManga}
+          collections={Object.values(payload?.persisted?.collections ?? {})}
+          onToggleCollection={(colId) => {
+            const col = (payload?.persisted?.collections ?? {})[colId];
+            if (!col) return;
+            const isIn = (col.mangaIds || []).includes(collectionPickerManga.id);
+            if (isIn) {
+              handleRemoveMangaFromCollection(colId, collectionPickerManga.id);
+            } else {
+              handleAddToCollection(collectionPickerManga.id, colId);
+            }
+          }}
+          onCreateCollection={async (name) => {
+            await handleCreateCollection(name, '');
+            const updated = await window.mangaAPI.bootstrap();
+            setPayload(updated);
+            const newCols = Object.values(updated?.persisted?.collections ?? {});
+            const newest = newCols.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
+            if (newest) await handleAddToCollection(collectionPickerManga.id, newest.id);
+          }}
+          onClose={() => setCollectionPickerManga(null)}
+        />
+      )}
+
+      {metadataSearchManga && (
+        <OnlineMetadataSearchModal
+          manga={metadataSearchManga}
+          onImport={handleImportOnlineMetadata}
+          onClose={() => setMetadataSearchManga(null)}
+        />
+      )}
+
       <ContextMenu menu={contextMenu} onClose={closeContextMenu} />
+    </div>
+  );
+}
+
+function CollectionPickerModal({ manga, collections, onToggleCollection, onCreateCollection, onClose }) {
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+        <h3>Collections — {manga.displayTitle}</h3>
+        <p className="muted-text" style={{ margin: '0 0 12px' }}>Coche les collections auxquelles ajouter ce manga.</p>
+        <div className="collection-picker-list">
+          {collections.length === 0 && <p className="muted-text">Aucune collection. Crée-en une ci-dessous.</p>}
+          {collections.map((col) => {
+            const isIn = (col.mangaIds || []).includes(manga.id);
+            return (
+              <label key={col.id} className="collection-picker-item">
+                <input type="checkbox" checked={isIn} onChange={() => onToggleCollection(col.id)} />
+                <span>{col.name}</span>
+                <small className="muted-text">{(col.mangaIds || []).length} manga{(col.mangaIds || []).length > 1 ? 's' : ''}</small>
+              </label>
+            );
+          })}
+        </div>
+        {creating ? (
+          <form className="collection-picker-create" onSubmit={async (e) => {
+            e.preventDefault();
+            if (!newName.trim()) return;
+            await onCreateCollection(newName.trim());
+            setNewName('');
+            setCreating(false);
+          }}>
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nom de la collection" autoFocus />
+            <button type="submit" className="primary-button" disabled={!newName.trim()}>Créer</button>
+            <button type="button" className="ghost-button" onClick={() => setCreating(false)}>Annuler</button>
+          </form>
+        ) : (
+          <button className="ghost-button" onClick={() => setCreating(true)} style={{ marginTop: 8 }}>
+            <PlusIcon size={14} /> Nouvelle collection
+          </button>
+        )}
+        <div className="modal-actions">
+          <button className="ghost-button" onClick={onClose}>Fermer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OnlineMetadataSearchModal({ manga, onImport, onClose }) {
+  const [query, setQuery] = useState(manga.displayTitle || '');
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [importing, setImporting] = useState(null);
+
+  async function handleSearch(e) {
+    e?.preventDefault();
+    if (!query.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const response = await window.mangaAPI.searchOnlineMetadata(query.trim());
+      setResults(response.results || []);
+      if (response.error) setError(response.error);
+    } catch (err) {
+      setError(err?.message || 'Erreur réseau');
+    }
+    setLoading(false);
+  }
+
+  async function handleImport(item) {
+    setImporting(item.malId);
+    try {
+      await onImport(manga.id, item);
+      onClose();
+    } catch (_) {
+      setError("Erreur lors de l'import");
+      setImporting(null);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel modal-panel-wide" onClick={(e) => e.stopPropagation()}>
+        <h3>Rechercher des métadonnées — {manga.displayTitle}</h3>
+        <p className="muted-text">Les données importées sont copiées localement et restent disponibles hors ligne.</p>
+        <form onSubmit={handleSearch} className="online-search-form">
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher un manga…" autoFocus />
+          <button type="submit" className="primary-button" disabled={loading || !query.trim()}>
+            {loading ? 'Recherche…' : 'Rechercher'}
+          </button>
+        </form>
+        {error && <p className="muted-text" style={{ color: '#ef4444' }}>{error}</p>}
+        <div className="online-results-list">
+          {results.map((item) => (
+            <div key={item.malId} className="online-result-card">
+              <div className="online-result-cover">
+                {item.coverUrl ? <img src={item.coverUrl} alt={item.title} /> : <div className="cover-fallback">?</div>}
+              </div>
+              <div className="online-result-info">
+                <strong>{item.title}</strong>
+                {item.titleJapanese && <small>{item.titleJapanese}</small>}
+                {item.authors && <span className="muted-text">{item.authors}</span>}
+                {item.synopsis && <p className="manga-description-clamp">{item.synopsis.slice(0, 200)}…</p>}
+                <div className="online-result-meta">
+                  {item.score && <span className="badge-pill">Score: {item.score}</span>}
+                  {item.genres?.slice(0, 3).map((g) => <span key={g} className="badge-pill">{g}</span>)}
+                </div>
+              </div>
+              <button
+                className="primary-button online-result-import"
+                onClick={() => handleImport(item)}
+                disabled={importing === item.malId}
+              >
+                {importing === item.malId ? 'Import…' : 'Importer'}
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="ghost-button" onClick={onClose}>Fermer</button>
+        </div>
+      </div>
     </div>
   );
 }

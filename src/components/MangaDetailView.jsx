@@ -1,9 +1,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeftIcon, EditIcon, HeartIcon, LayersIcon, PlayIcon, PlusIcon, ScrollIcon, SearchIcon, SparklesIcon, TagIcon } from './Icons.jsx';
+import { ChevronLeftIcon, EditIcon, HeartIcon, LayersIcon, PlayIcon, PlusIcon, ScrollIcon, SearchIcon, SparklesIcon, TagIcon, BookIcon, ClockIcon, ZapIcon } from './Icons.jsx';
 import { getProgressPercent } from '../utils/reader.js';
 
 // ---------------------------------------------------------------------------
-// Scroll restoration (RAF + setTimeout, user interaction cancels)
+// Scroll restoration
 // ---------------------------------------------------------------------------
 
 function restoreScrollPosition(element, value) {
@@ -22,9 +22,7 @@ function restoreScrollPosition(element, value) {
     element.scrollTo({ top: target, behavior: 'auto' });
   };
 
-  const stopRestoring = () => {
-    userInteracted = true;
-  };
+  const stopRestoring = () => { userInteracted = true; };
 
   ['wheel', 'touchstart', 'pointerdown', 'mousedown', 'keydown'].forEach((eventName) => {
     const handler = () => stopRestoring();
@@ -54,7 +52,7 @@ function restoreScrollPosition(element, value) {
 }
 
 // ---------------------------------------------------------------------------
-// Middle-click helpers
+// Helpers
 // ---------------------------------------------------------------------------
 
 function middleMouseDown(event) {
@@ -69,10 +67,6 @@ function middleMouseUp(event, callback) {
   callback();
 }
 
-// ---------------------------------------------------------------------------
-// Reading state helpers
-// ---------------------------------------------------------------------------
-
 function getReadingStateLabel(state) {
   switch (state) {
     case 'read': return 'Lu';
@@ -80,6 +74,14 @@ function getReadingStateLabel(state) {
     case 'to-resume': return 'À reprendre';
     case 'never':
     default: return 'Non lu';
+  }
+}
+
+function getReadingStateClass(state) {
+  switch (state) {
+    case 'read': return 'detail-badge-read';
+    case 'in-progress': return 'detail-badge-progress';
+    default: return 'detail-badge-unread';
   }
 }
 
@@ -92,31 +94,31 @@ function getChapterDotClass(chapter) {
 function formatDate(dateStr) {
   if (!dateStr) return null;
   try {
-    return new Date(dateStr).toLocaleDateString('fr-FR', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    });
+    return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  } catch {
+    return null;
+  }
+}
+
+function formatRelativeDate(dateStr) {
+  if (!dateStr) return null;
+  try {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return "Aujourd'hui";
+    if (diffDays === 1) return 'Hier';
+    if (diffDays < 7) return `Il y a ${diffDays} jours`;
+    if (diffDays < 30) return `Il y a ${Math.floor(diffDays / 7)} sem.`;
+    return formatDate(dateStr);
   } catch {
     return null;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Cover type indicator label
-// ---------------------------------------------------------------------------
-
-function getCoverTypeLabel(coverType) {
-  switch (coverType) {
-    case 'custom': return 'Personnalisée';
-    case 'first-page': return 'Première page';
-    case 'default':
-    default: return 'Par défaut';
-  }
-}
-
-// ---------------------------------------------------------------------------
-// MangaDetailView
+// Online Metadata Modal
 // ---------------------------------------------------------------------------
 
 function OnlineMetadataModal({ manga, onClose, onImport }) {
@@ -147,7 +149,7 @@ function OnlineMetadataModal({ manga, onClose, onImport }) {
       await onImport(manga.id, item);
       onClose();
     } catch (_) {
-      setError('Erreur lors de l\'import');
+      setError("Erreur lors de l'import");
       setImporting(null);
     }
   }
@@ -158,12 +160,7 @@ function OnlineMetadataModal({ manga, onClose, onImport }) {
         <h3><SearchIcon size={18} /> Rechercher des métadonnées en ligne</h3>
         <p className="muted-text">Les données importées sont copiées localement et restent disponibles hors ligne.</p>
         <form onSubmit={handleSearch} className="online-search-form">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher un manga…"
-            autoFocus
-          />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher un manga…" autoFocus />
           <button type="submit" className="primary-button" disabled={loading || !query.trim()}>
             {loading ? 'Recherche…' : 'Rechercher'}
           </button>
@@ -203,6 +200,10 @@ function OnlineMetadataModal({ manga, onClose, onImport }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// MangaDetailView — MangaDex-like layout
+// ---------------------------------------------------------------------------
+
 function MangaDetailView({
   manga,
   allTags,
@@ -223,27 +224,24 @@ function MangaDetailView({
 }) {
   const containerRef = useRef(null);
   const [showOnlineSearch, setShowOnlineSearch] = useState(false);
+  const [chaptersExpanded, setChaptersExpanded] = useState(false);
+  const [chapterSort, setChapterSort] = useState('asc'); // 'asc' | 'desc'
 
-  // Save scroll position on unmount
   useEffect(() => () => {
     if (containerRef.current) onScrollPositionChange?.(containerRef.current.scrollTop);
   }, [onScrollPositionChange]);
 
-  // Restore scroll position
   useLayoutEffect(
     () => restoreScrollPosition(containerRef.current, initialScrollTop),
     [initialScrollTop, manga.id]
   );
 
-  // Resolve the resume chapter (last reading position)
   const resumeChapterId = useMemo(() => {
     if (manga.progress?.lastChapterId) return manga.progress.lastChapterId;
-    // Fallback: find first non-read chapter
     const ch = manga.chapters?.find((c) => !c.isRead);
     return ch?.id ?? manga.chapters?.[0]?.id ?? null;
   }, [manga]);
 
-  // Resolve collections this manga belongs to
   const mangaCollections = useMemo(() => {
     if (!allCollections || !manga.collectionIds?.length) return [];
     const idSet = new Set(manga.collectionIds);
@@ -252,10 +250,23 @@ function MangaDetailView({
 
   const progressPercent = manga.progressPercent ?? manga.progress?.percent ?? 0;
   const readingState = manga.readingState || (manga.isRead ? 'read' : progressPercent > 0 ? 'in-progress' : 'never');
+  const totalChapters = manga.chapters?.length ?? 0;
+  const readChapters = manga.completedChapterCount ?? 0;
+
+  const sortedChapters = useMemo(() => {
+    if (!manga.chapters) return [];
+    if (chapterSort === 'desc') return [...manga.chapters].reverse();
+    return manga.chapters;
+  }, [manga.chapters, chapterSort]);
+
+  const displayedChapters = chaptersExpanded ? sortedChapters : sortedChapters.slice(0, 30);
 
   const handleScroll = useCallback((event) => {
     onScrollPositionChange?.(event.currentTarget.scrollTop);
   }, [onScrollPositionChange]);
+
+  // Aliases display
+  const aliases = manga.aliases?.filter(Boolean) ?? [];
 
   return (
     <section className="detail-view" ref={containerRef} onScroll={handleScroll}>
@@ -264,8 +275,8 @@ function MangaDetailView({
         <ChevronLeftIcon size={16} /> Retour
       </button>
 
-      {/* Hero banner */}
-      <div className="detail-hero" onContextMenu={(event) => onContextMenu(event, { type: 'manga', manga })}>
+      {/* Hero banner — MangaDex style */}
+      <div className="detail-hero detail-hero-mdx" onContextMenu={(event) => onContextMenu(event, { type: 'manga', manga })}>
         <div className="detail-cover-card">
           {manga.coverSrc
             ? <img src={manga.coverSrc} alt={manga.displayTitle} className="detail-cover" loading="lazy" />
@@ -274,10 +285,14 @@ function MangaDetailView({
         </div>
 
         <div className="detail-copy">
+          {/* Title area */}
           <div className="detail-title-row">
             <div className="detail-title-block">
               <h1 className="detail-title-ellipsis" title={manga.displayTitle}>{manga.displayTitle}</h1>
               {manga.author && <p className="detail-author">{manga.author}</p>}
+              {aliases.length > 0 && (
+                <p className="detail-aliases">{aliases.join(' · ')}</p>
+              )}
             </div>
             <button
               className={`favorite-toggle detail-favorite ${manga.isFavorite ? 'favorite-toggle-active' : ''}`}
@@ -288,12 +303,12 @@ function MangaDetailView({
             </button>
           </div>
 
-          {/* Compact stats row */}
-          <div className="detail-stats-row">
-            <span className={`detail-status detail-status-${readingState}`}>{getReadingStateLabel(readingState)}</span>
-            <span>{manga.chapterCount} chapitres</span>
-            <span>{manga.completedChapterCount ?? 0} lus</span>
-            <span>{progressPercent}%</span>
+          {/* Reading state badge row */}
+          <div className="detail-badge-row">
+            <span className={`detail-badge ${getReadingStateClass(readingState)}`}>{getReadingStateLabel(readingState)}</span>
+            <span className="detail-badge detail-badge-neutral">{totalChapters} chapitre{totalChapters > 1 ? 's' : ''}</span>
+            <span className="detail-badge detail-badge-neutral">{readChapters}/{totalChapters} lus</span>
+            <span className="detail-badge detail-badge-neutral">{progressPercent}%</span>
           </div>
 
           {/* Progress bar */}
@@ -315,94 +330,174 @@ function MangaDetailView({
                 <ScrollIcon size={16} /> Ch. 1
               </button>
             )}
-            <button className="ghost-button" onClick={onOpenMetadataEditor}>
+            <button className="ghost-button" onClick={onOpenMetadataEditor} title="Éditer les métadonnées">
               <EditIcon size={14} />
             </button>
-            <button className="ghost-button" onClick={() => setShowOnlineSearch(true)}>
+            <button className="ghost-button" onClick={() => setShowOnlineSearch(true)} title="Rechercher en ligne">
               <SearchIcon size={14} />
             </button>
-            <button className="ghost-button" onClick={() => onPickCover(manga.id)}>
+            <button className="ghost-button" onClick={() => onPickCover(manga.id)} title="Choisir une couverture">
               <SparklesIcon size={14} />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Info section below hero */}
-      <div className="detail-info-section">
-        {/* Description */}
-        {manga.description && (
-          <div className="detail-description-block">
+      {/* Info panels — MangaDex-like organized sections */}
+      <div className="detail-panels">
+        {/* Description panel */}
+        <div className="detail-panel">
+          <h3 className="detail-panel-title">Description</h3>
+          {manga.description ? (
             <p className="detail-description">{manga.description}</p>
-          </div>
-        )}
+          ) : (
+            <p className="detail-description muted-text">Aucune description disponible. Utilise la recherche en ligne pour en importer une.</p>
+          )}
+        </div>
 
-        {/* Tags */}
-        {(manga.tags?.length > 0 || onAddTag) && (
-          <div className="detail-tag-pills">
-            <TagIcon size={14} />
-            {manga.tags?.map((tag) => (
-              <span key={tag.id} className="manga-tag-pill" style={{ '--tag-color': tag.color }}>{tag.name}</span>
-            ))}
+        {/* Information panel */}
+        <div className="detail-panel">
+          <h3 className="detail-panel-title">Informations</h3>
+          <div className="detail-info-grid">
+            <div className="detail-info-item">
+              <span className="detail-info-label">Auteur</span>
+              <span className="detail-info-value">{manga.author || '—'}</span>
+            </div>
+            <div className="detail-info-item">
+              <span className="detail-info-label">Statut</span>
+              <span className="detail-info-value">{getReadingStateLabel(readingState)}</span>
+            </div>
+            <div className="detail-info-item">
+              <span className="detail-info-label">Chapitres</span>
+              <span className="detail-info-value">{totalChapters}</span>
+            </div>
+            <div className="detail-info-item">
+              <span className="detail-info-label">Progression</span>
+              <span className="detail-info-value">{readChapters}/{totalChapters} ({progressPercent}%)</span>
+            </div>
+            {manga.categoryName && (
+              <div className="detail-info-item">
+                <span className="detail-info-label">Catégorie</span>
+                <span className="detail-info-value">{manga.categoryName}</span>
+              </div>
+            )}
+            {manga.path && (
+              <div className="detail-info-item detail-info-item-full">
+                <span className="detail-info-label">Chemin</span>
+                <span className="detail-info-value detail-info-path">{manga.path}</span>
+              </div>
+            )}
+            {manga.addedAt && (
+              <div className="detail-info-item">
+                <span className="detail-info-label">Ajouté le</span>
+                <span className="detail-info-value">{formatDate(manga.addedAt)}</span>
+              </div>
+            )}
+            {manga.lastReadAt && (
+              <div className="detail-info-item">
+                <span className="detail-info-label">Dernière lecture</span>
+                <span className="detail-info-value">{formatRelativeDate(manga.lastReadAt)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Tags panel */}
+        <div className="detail-panel">
+          <h3 className="detail-panel-title">
+            <TagIcon size={16} /> Tags
             {onAddTag && (
-              <button className="ghost-button detail-tag-add-btn" onClick={() => onAddTag(manga.id)} title="Gérer les tags">
-                <PlusIcon size={12} />
+              <button className="ghost-button detail-panel-action" onClick={() => onAddTag(manga.id)} title="Gérer les tags">
+                <PlusIcon size={14} />
               </button>
             )}
-          </div>
-        )}
+          </h3>
+          {manga.tags?.length > 0 ? (
+            <div className="detail-tag-pills">
+              {manga.tags.map((tag) => (
+                <span key={tag.id} className="manga-tag-pill" style={{ '--tag-color': tag.color }}>{tag.name}</span>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-text" style={{ margin: 0, fontSize: '0.88rem' }}>Aucun tag. Ajoute-en depuis le bouton ci-dessus.</p>
+          )}
+        </div>
 
-        {/* Collections */}
-        {(mangaCollections.length > 0 || onAddToCollection) && (
-          <div className="detail-collections">
-            <LayersIcon size={14} />
-            {mangaCollections.map((col) => (
-              <span key={col.id} className="badge-pill badge-pill-collection">{col.name}</span>
-            ))}
+        {/* Collections panel */}
+        <div className="detail-panel">
+          <h3 className="detail-panel-title">
+            <LayersIcon size={16} /> Collections
             {onAddToCollection && (
-              <button className="ghost-button detail-collection-add-btn" onClick={() => onAddToCollection(manga.id)} title="Gérer les collections">
-                <PlusIcon size={12} />
+              <button className="ghost-button detail-panel-action" onClick={() => onAddToCollection(manga.id)} title="Gérer les collections">
+                <PlusIcon size={14} />
               </button>
             )}
-          </div>
-        )}
-
-        {/* Dates */}
-        <div className="detail-dates">
-          {manga.addedAt && <span className="muted-text">Ajouté {formatDate(manga.addedAt)}</span>}
-          {manga.lastReadAt && <span className="muted-text">Dernière lecture {formatDate(manga.lastReadAt)}</span>}
+          </h3>
+          {mangaCollections.length > 0 ? (
+            <div className="detail-collections-list">
+              {mangaCollections.map((col) => (
+                <span key={col.id} className="badge-pill badge-pill-collection">{col.name}</span>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-text" style={{ margin: 0, fontSize: '0.88rem' }}>Ce manga n'appartient à aucune collection.</p>
+          )}
         </div>
       </div>
 
-      {/* Chapters */}
-      <div className="section-header">
-        <h2>Chapitres</h2>
-        <span>{manga.chapters.length} élément{manga.chapters.length > 1 ? 's' : ''}</span>
-      </div>
+      {/* Chapters section */}
+      <div className="detail-chapters-section">
+        <div className="section-header">
+          <h2>{totalChapters} Chapitre{totalChapters > 1 ? 's' : ''}</h2>
+          <div className="detail-chapter-controls">
+            <button
+              className={`ghost-button detail-chapter-sort ${chapterSort === 'asc' ? 'active' : ''}`}
+              onClick={() => setChapterSort('asc')}
+            >
+              1→{totalChapters}
+            </button>
+            <button
+              className={`ghost-button detail-chapter-sort ${chapterSort === 'desc' ? 'active' : ''}`}
+              onClick={() => setChapterSort('desc')}
+            >
+              {totalChapters}→1
+            </button>
+          </div>
+        </div>
 
-      <div className="chapter-grid">
-        {manga.chapters.map((chapter, index) => (
-          <button
-            key={chapter.id}
-            className={`chapter-card ${chapter.isRead ? 'chapter-card-read' : ''}`}
-            onClick={() => onOpenChapter(chapter.id)}
-            onMouseDown={middleMouseDown}
-            onMouseUp={(event) => middleMouseUp(event, () => onOpenChapterInBackgroundTab(chapter.id))}
-            onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter })}
-          >
-            <div className="chapter-cover-wrap">
-              {chapter.previewSrc
-                ? <img src={chapter.previewSrc} alt={chapter.name} className="chapter-cover" loading="lazy" />
-                : <div className="cover-fallback">{index + 1}</div>
-              }
-              <span className={getChapterDotClass(chapter)} />
-            </div>
-            <div className="chapter-card-body">
-              <strong>{chapter.name}</strong>
-              <span>{chapter.pageCount} p. · {chapter.isRead ? 'Lu' : `${getProgressPercent(chapter.progress)}%`}</span>
-            </div>
+        <div className="chapter-grid">
+          {displayedChapters.map((chapter, index) => {
+            const realIndex = chapterSort === 'desc' ? totalChapters - 1 - index : index;
+            return (
+              <button
+                key={chapter.id}
+                className={`chapter-card ${chapter.isRead ? 'chapter-card-read' : ''}`}
+                onClick={() => onOpenChapter(chapter.id)}
+                onMouseDown={middleMouseDown}
+                onMouseUp={(event) => middleMouseUp(event, () => onOpenChapterInBackgroundTab(chapter.id))}
+                onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter })}
+              >
+                <div className="chapter-cover-wrap">
+                  {chapter.previewSrc
+                    ? <img src={chapter.previewSrc} alt={chapter.name} className="chapter-cover" loading="lazy" />
+                    : <div className="cover-fallback">{realIndex + 1}</div>
+                  }
+                  <span className={getChapterDotClass(chapter)} />
+                </div>
+                <div className="chapter-card-body">
+                  <strong>{chapter.name}</strong>
+                  <span>{chapter.pageCount} p. · {chapter.isRead ? 'Lu' : `${getProgressPercent(chapter.progress)}%`}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {sortedChapters.length > 30 && !chaptersExpanded && (
+          <button className="ghost-button detail-show-all-chapters" onClick={() => setChaptersExpanded(true)}>
+            Afficher les {sortedChapters.length - 30} chapitres restants
           </button>
-        ))}
+        )}
       </div>
 
       {showOnlineSearch && (

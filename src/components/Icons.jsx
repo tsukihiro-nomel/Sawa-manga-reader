@@ -7,7 +7,7 @@ import {
   Image, Keyboard, Layers, Library, Maximize2, Minus,
   MoonStar, PanelLeftClose, PanelLeftOpen, PencilLine, Pin,
   Play, Plus, RefreshCw, ScrollText, Search, Settings2,
-  Sparkles, SunMedium, Tag, Trash2, Upload, X, Zap, ZoomIn, ZoomOut
+  Sparkles, SunMedium, Tag, Trash2, TrendingUp, Upload, X, Zap, ZoomIn, ZoomOut
 } from 'lucide-react';
 
 function makeIcon(Component, defaults = {}) {
@@ -66,3 +66,4 @@ export const HardDriveIcon = makeIcon(HardDrive);
 export const ArchiveIcon = makeIcon(Archive);
 export const SortIcon = makeIcon(ArrowDownUp);
 export const ZapIcon = makeIcon(Zap);
+export const TrendingUpIcon = makeIcon(TrendingUp);
