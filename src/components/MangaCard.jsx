@@ -2,9 +2,9 @@ import { memo, useCallback } from 'react';
 import { HeartIcon } from './Icons.jsx';
 
 /**
- * Unified MangaCard — cover + info card style.
- * Cover image on top with overlay badges, info section below with
- * title, author, chapter count, progress, and tags.
+ * Unified MangaCard — matches the premium reference design.
+ * Cover fully visible (contain, not crop), status badge, heart,
+ * title, tags with +N overflow, info line with separators.
  */
 const MangaCard = memo(function MangaCard({
   manga,
@@ -27,6 +27,17 @@ const MangaCard = memo(function MangaCard({
 
   const pct = manga.progressPercent ?? 0;
   const stateLabel = manga.isRead ? 'Lu' : pct > 0 ? 'En cours' : null;
+
+  // Unified tags: manga.tags (resolved tag objects)
+  const allTags = manga.tags || [];
+  const visibleTags = compact ? [] : allTags.slice(0, 3);
+  const extraCount = Math.max(0, allTags.length - 3);
+
+  // Build info fragments: "X ch. ◦ Auteur ◦ Y%"
+  const infoFragments = [];
+  infoFragments.push(`${manga.chapterCount} ch.`);
+  if (!compact && manga.author) infoFragments.push(manga.author);
+  if (pct > 0) infoFragments.push(`${pct}%`);
 
   return (
     <article
@@ -78,25 +89,25 @@ const MangaCard = memo(function MangaCard({
       <div className="mc-info">
         <h3 className="mc-title" title={manga.displayTitle}>{manga.displayTitle}</h3>
 
-        {!compact && manga.author && (
-          <p className="mc-author">{manga.author}</p>
-        )}
-
-        <div className="mc-stats">
-          <span className="mc-stat">{manga.chapterCount} ch.</span>
-          {pct > 0 && <span className="mc-stat mc-stat-progress">{pct}%</span>}
-          {!compact && manga.completedChapterCount > 0 && (
-            <span className="mc-stat">{manga.completedChapterCount}/{manga.chapterCount}</span>
-          )}
-        </div>
-
-        {!compact && manga.tags && manga.tags.length > 0 && (
+        {visibleTags.length > 0 && (
           <div className="mc-tags">
-            {manga.tags.slice(0, 3).map((t) => (
+            {visibleTags.map((t) => (
               <span key={t.id} className="mc-tag" style={{ '--tc': t.color || 'var(--accent)' }}>{t.name}</span>
             ))}
+            {extraCount > 0 && (
+              <span className="mc-tag mc-tag-extra">+{extraCount}</span>
+            )}
           </div>
         )}
+
+        <div className="mc-meta-line">
+          {infoFragments.map((frag, i) => (
+            <span key={i}>
+              {i > 0 && <span className="mc-meta-sep">&#9702;</span>}
+              <span className={frag.endsWith('%') ? 'mc-meta-accent' : ''}>{frag}</span>
+            </span>
+          ))}
+        </div>
       </div>
     </article>
   );

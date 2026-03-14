@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MoonIcon, SparklesIcon, SunIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon } from './Icons.jsx';
+import { MoonIcon, SparklesIcon, SunIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon, ImageIcon, TrashIcon } from './Icons.jsx';
 
 const THEMES = [
   { id: 'dark-night', icon: MoonIcon, title: 'Dark Night', description: 'Noir profond, contraste premium et lumière maîtrisée.' },
@@ -81,7 +81,7 @@ function ShortcutRow({ id, shortcut, customKeys, onRecord }) {
   );
 }
 
-export default function SettingsDrawer({ open, ui, onClose, onChange }) {
+export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBackground, onRemoveBackground }) {
   const shortcuts = ui.shortcuts || {};
 
   async function handleExportSawa() {
@@ -175,6 +175,79 @@ export default function SettingsDrawer({ open, ui, onClose, onChange }) {
             <ColorField label="Couleur d'accent" value={ui.accent || '#8b5cf6'} onChange={(accent) => onChange({ accent })} helper="Boutons actifs, sélection, focus." />
             <ColorField label="Couleur de détail" value={ui.accentAlt || '#38bdf8'} onChange={(accentAlt) => onChange({ accentAlt })} helper="Dégradés secondaires, glows." />
           </section>
+        </div>
+
+        {/* ── Image de fond ── */}
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4><ImageIcon size={16} /> Image de fond</h4>
+            <span>Personnalise le fond du logiciel avec une image.</span>
+          </div>
+
+          {ui.backgroundImage ? (
+            <div className="bg-image-preview-wrap">
+              <div className="bg-image-preview">
+                <img src={`manga://local/${encodeURIComponent(ui.backgroundImage)}`} alt="Fond" />
+                <div className="bg-image-preview-overlay" style={{ opacity: 1 - (ui.backgroundOpacity ?? 0.15) }} />
+              </div>
+              <div className="bg-image-actions">
+                <button className="ghost-button" onClick={onPickBackground}>
+                  <ImageIcon size={14} /> Changer
+                </button>
+                <button className="ghost-button ghost-button-danger" onClick={onRemoveBackground}>
+                  <TrashIcon size={14} /> Retirer
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="ghost-button bg-image-pick-btn" onClick={onPickBackground}>
+              <ImageIcon size={16} /> Choisir une image
+            </button>
+          )}
+
+          {ui.backgroundImage && (
+            <>
+              <div className="settings-subsection">
+                <h5>Opacité de l'image ({Math.round((ui.backgroundOpacity ?? 0.15) * 100)}%)</h5>
+                <input
+                  type="range"
+                  min="0" max="100" step="1"
+                  value={Math.round((ui.backgroundOpacity ?? 0.15) * 100)}
+                  onChange={(e) => onChange({ backgroundOpacity: parseInt(e.target.value, 10) / 100 })}
+                  className="settings-slider"
+                />
+                <div className="settings-note">Baisse l'opacité pour voir le thème en fond.</div>
+              </div>
+
+              <div className="settings-subsection">
+                <label className="settings-toggle">
+                  <span>Utiliser les couleurs extraites de l'image</span>
+                  <input
+                    type="checkbox"
+                    checked={!!ui.useBackgroundColors}
+                    onChange={(e) => {
+                      if (e.target.checked && ui.backgroundAccent) {
+                        onChange({
+                          useBackgroundColors: true,
+                          accent: ui.backgroundAccent,
+                          accentAlt: ui.backgroundAccentAlt || ui.backgroundAccent
+                        });
+                      } else {
+                        onChange({ useBackgroundColors: false });
+                      }
+                    }}
+                  />
+                </label>
+                {ui.backgroundAccent && (
+                  <div className="bg-extracted-colors">
+                    <span className="bg-color-swatch" style={{ background: ui.backgroundAccent }} title={ui.backgroundAccent} />
+                    <span className="bg-color-swatch" style={{ background: ui.backgroundAccentAlt || ui.backgroundAccent }} title={ui.backgroundAccentAlt} />
+                    <span className="muted-text" style={{ fontSize: '0.75rem' }}>Couleurs détectées</span>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* ── Lecture ── */}

@@ -684,6 +684,14 @@ export default function App() {
     await refreshWith(window.mangaAPI.updateSettings(patch));
   }
 
+  async function handlePickBackgroundImage() {
+    await refreshWith(window.mangaAPI.pickBackgroundImage());
+  }
+
+  async function handleRemoveBackgroundImage() {
+    await refreshWith(window.mangaAPI.removeBackgroundImage());
+  }
+
   function handleUpdateProgress(progressPayload) {
     const now = new Date().toISOString();
 
@@ -905,12 +913,26 @@ export default function App() {
     return <div className="boot-screen">Chargement de la bibliothèque…</div>;
   }
 
+  const bgImageUrl = ui.backgroundImage
+    ? `manga://local/${encodeURIComponent(ui.backgroundImage)}`
+    : null;
+  const bgOpacity = ui.backgroundOpacity ?? 0.15;
+
   return (
     <div
       className={`app-shell theme-${theme}`}
       style={{ '--accent': ui.accent, '--accent-alt': ui.accentAlt || '#38bdf8', '--card-min': cardSizeMinWidth(ui.cardSize) }}
       onContextMenu={(event) => openContextMenu(event)}
     >
+      {bgImageUrl && (
+        <div
+          className="app-bg-image"
+          style={{
+            backgroundImage: `url("${bgImageUrl}")`,
+            opacity: bgOpacity
+          }}
+        />
+      )}
       <TitleBar
         sidebarCollapsed={ui.sidebarCollapsed}
         onToggleSidebar={toggleSidebarCollapsed}
@@ -1100,6 +1122,8 @@ export default function App() {
         ui={ui}
         onClose={() => setSettingsOpen(false)}
         onChange={handleUpdateSettings}
+        onPickBackground={handlePickBackgroundImage}
+        onRemoveBackground={handleRemoveBackgroundImage}
       />
 
       {editingMetadata && (

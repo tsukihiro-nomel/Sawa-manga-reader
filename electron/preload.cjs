@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('mangaAPI', {
 
   // ── UI ───────────────────────────────────────────────
   updateSettings:         (patch)                         => invoke('ui:updateSettings', patch),
+  pickBackgroundImage:    ()                              => invoke('ui:pickBackgroundImage'),
+  removeBackgroundImage:  ()                              => invoke('ui:removeBackgroundImage'),
   saveTabsSession:        (payload)                       => invoke('session:saveTabs', payload),
 
   // ── Window ───────────────────────────────────────────
