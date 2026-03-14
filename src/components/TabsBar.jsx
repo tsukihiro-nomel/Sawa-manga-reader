@@ -99,12 +99,12 @@ function TabsBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab, onConte
 
   return (
     <div className="tabsbar">
-      <div className="tabsbar-actions no-drag tabsbar-actions-left">
+      <div className="tabsbar-actions tabsbar-actions-left">
         <button className="tabsbar-scroll" onClick={() => trackRef.current?.scrollBy({ left: -240, behavior: 'smooth' })} disabled={!canScrollLeft} title="Défiler gauche">
           <ChevronLeftIcon size={14} />
         </button>
       </div>
-      <div className="tabsbar-track no-drag" ref={trackRef} onWheel={handleWheel}>
+      <div className="tabsbar-track" ref={trackRef} onWheel={handleWheel}>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
             <div className="tabsbar-track-inner">
@@ -115,7 +115,7 @@ function TabsBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab, onConte
           </SortableContext>
         </DndContext>
       </div>
-      <div className="tabsbar-actions no-drag">
+      <div className="tabsbar-actions">
         <button className="tabsbar-new" onClick={onNewTab} title="Nouvel onglet"><PlusIcon size={14} /></button>
         <button className="tabsbar-scroll" onClick={() => trackRef.current?.scrollBy({ left: 240, behavior: 'smooth' })} disabled={!canScrollRight} title="Défiler droite">
           <ChevronRightIcon size={14} />

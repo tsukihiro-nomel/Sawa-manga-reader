@@ -142,8 +142,14 @@ function ReaderView({
     const listener = (event) => {
       const isModifierChapterNav = (event.ctrlKey || event.metaKey) && !event.altKey;
       if (mode !== 'webtoon') {
-        if (!isModifierChapterNav && event.key === 'ArrowRight') next();
-        if (!isModifierChapterNav && event.key === 'ArrowLeft') previous();
+        if (mode === 'manga-jp') {
+          // RTL: ArrowLeft advances, ArrowRight goes back
+          if (!isModifierChapterNav && event.key === 'ArrowLeft') next();
+          if (!isModifierChapterNav && event.key === 'ArrowRight') previous();
+        } else {
+          if (!isModifierChapterNav && event.key === 'ArrowRight') next();
+          if (!isModifierChapterNav && event.key === 'ArrowLeft') previous();
+        }
       }
       if (isModifierChapterNav && event.key === 'ArrowRight' && nextChapter) {
         event.preventDefault();
@@ -422,8 +428,8 @@ function ReaderView({
 
       {mode === 'manga-jp' && (
         <div className="reader-stage reader-stage-double reader-stage-manga-jp" onClick={handleStageToggle}>
-          <button className="reader-nav reader-nav-left" onClick={(event) => { event.stopPropagation(); previous(); }} disabled={currentMangaJPSpreadIndex <= 0}><ChevronLeftIcon size={20} /></button>
-          <div className="reader-double-wrap" style={{ direction: currentMangaJPSpread.isRTL ? 'rtl' : 'ltr' }} onClick={handleStageToggle}>
+          <button className="reader-nav reader-nav-left" onClick={(event) => { event.stopPropagation(); next(); }} disabled={currentMangaJPSpreadIndex >= mangaJPSpreads.length - 1}><ChevronLeftIcon size={20} /></button>
+          <div className="reader-double-wrap reader-double-wrap-rtl" onClick={handleStageToggle}>
             {currentMangaJPSpread.isRTL && currentMangaJPSpread.end !== currentMangaJPSpread.start ? (
               <>
                 <img
@@ -451,7 +457,7 @@ function ReaderView({
               />
             )}
           </div>
-          <button className="reader-nav reader-nav-right" onClick={(event) => { event.stopPropagation(); next(); }} disabled={currentMangaJPSpreadIndex >= mangaJPSpreads.length - 1}><ChevronRightIcon size={20} /></button>
+          <button className="reader-nav reader-nav-right" onClick={(event) => { event.stopPropagation(); previous(); }} disabled={currentMangaJPSpreadIndex <= 0}><ChevronRightIcon size={20} /></button>
         </div>
       )}
 
