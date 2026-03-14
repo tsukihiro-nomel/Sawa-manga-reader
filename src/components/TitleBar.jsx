@@ -107,9 +107,9 @@ function TitleBar({
 
   return (
     <header className="titlebar">
-      <div className="titlebar-brand no-drag">
+      <div className="titlebar-brand">
         <button
-          className="window-button titlebar-sidebar-toggle"
+          className="window-button titlebar-sidebar-toggle no-drag"
           onClick={onToggleSidebar}
           aria-label={sidebarCollapsed ? 'Afficher la barre latérale' : 'Replier la barre latérale'}
           title={sidebarCollapsed ? 'Afficher la barre latérale' : 'Replier la barre latérale'}
@@ -120,7 +120,7 @@ function TitleBar({
         <span>Sawa</span>
       </div>
 
-      <div className="titlebar-tabs-area no-drag">
+      <div className="titlebar-tabs-area">
         {canScrollLeft && (
           <button
             className="tabsbar-scroll"
@@ -158,7 +158,7 @@ function TitleBar({
         )}
       </div>
 
-      <div className="titlebar-actions no-drag">
+      <div className="titlebar-actions">
         <button className="window-button" onClick={() => window.mangaAPI.minimizeWindow()} aria-label="Minimiser">
           <MinimizeIcon size={16} />
         </button>

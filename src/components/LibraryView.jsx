@@ -149,6 +149,7 @@ function LibraryView({
   mangas,
   activeShelf,
   categories,
+  cardSize = 'comfortable',
   initialScrollTop = 0,
   scrollKey,
   onScrollPositionChange,
@@ -162,7 +163,8 @@ function LibraryView({
   const restoredRef = useRef(false);
   const savingBlockedRef = useRef(false);
 
-  // Calculate columns based on container width
+  // Calculate columns based on container width and card size setting
+  const minCard = cardSize === 'compact' ? 190 : cardSize === 'large' ? 250 : 215;
   const [columns, setColumns] = useState(5);
   useEffect(() => {
     const el = containerRef.current;
@@ -170,13 +172,12 @@ function LibraryView({
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const w = entry.contentRect.width - 48; // padding
-        const minCard = 215;
         setColumns(Math.max(2, Math.floor(w / minCard)));
       }
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [minCard]);
 
   const rows = useMemo(() => {
     const result = [];
@@ -186,15 +187,13 @@ function LibraryView({
     return result;
   }, [mangas, columns]);
 
-  const ROW_HEIGHT = 520;
-  const HERO_HEIGHT = showHero && mangas.length > 0 ? 420 : 0;
+  const ROW_HEIGHT = cardSize === 'compact' ? 440 : cardSize === 'large' ? 580 : 520;
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => containerRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 4,
-    paddingStart: HERO_HEIGHT,
     measureElement: (el) => el?.getBoundingClientRect().height ?? ROW_HEIGHT
   });
 

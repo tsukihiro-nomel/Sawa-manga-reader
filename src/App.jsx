@@ -775,17 +775,25 @@ export default function App() {
         actionItem(context.manga.isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris', () => handleToggleFavorite(context.manga.id), {
           icon: <HeartIcon size={14} filled={context.manga.isFavorite} />
         }),
-        actionItem(context.manga.isRead ? 'Marquer tous les chapitres comme non lus' : 'Marquer tous les chapitres comme lus', () => handleSetReadStatus(context.manga.id, !context.manga.isRead, context.manga.chapters.map((chapter) => chapter.id)), {
+        actionItem(context.manga.isRead ? 'Marquer comme non lu' : 'Marquer comme lu', () => handleSetReadStatus(context.manga.id, !context.manga.isRead, context.manga.chapters.map((chapter) => chapter.id)), {
           icon: <BookIcon size={14} />
         }),
-        actionItem('Réinitialiser toute la progression', () => handleResetProgress(context.manga.id, context.manga.chapters.map((chapter) => chapter.id)), {
+        separatorItem(),
+        actionItem('Gérer les tags', () => setTagManagerManga(context.manga), { icon: <TagIcon size={14} /> }),
+        actionItem('Ajouter à une collection', () => {
+          const collections = Object.values(payload?.persisted?.collections ?? {});
+          if (collections.length > 0) {
+            handleAddToCollection(context.manga.id, collections[0].id);
+          }
+        }, { icon: <LayersIcon size={14} /> }),
+        actionItem('Éditer les métadonnées', () => setEditingMetadata(context.manga), { icon: <EditIcon size={14} /> }),
+        actionItem('Choisir une couverture', () => handlePickCover(context.manga.id), { icon: <SparklesIcon size={14} /> }),
+        separatorItem(),
+        actionItem('Réinitialiser la progression', () => handleResetProgress(context.manga.id, context.manga.chapters.map((chapter) => chapter.id)), {
           icon: <TrashIcon size={14} />,
           danger: true
         }),
-        actionItem('Gérer les tags', () => setTagManagerManga(context.manga), { icon: <TagIcon size={14} /> }),
-        actionItem('Éditer les métadonnées', () => setEditingMetadata(context.manga), { icon: <EditIcon size={14} /> }),
-        actionItem('Choisir une couverture', () => handlePickCover(context.manga.id), { icon: <SparklesIcon size={14} /> }),
-        actionItem('Supprimer le manga (corbeille)', () => handleTrashManga(context.manga.id), { icon: <TrashIcon size={14} />, danger: true })
+        actionItem('Supprimer le manga', () => handleTrashManga(context.manga.id), { icon: <TrashIcon size={14} />, danger: true })
       );
     }
 
@@ -956,6 +964,7 @@ export default function App() {
               mangas={filteredMangas}
               activeScreen={activeScreen}
               categories={visibleCategories}
+              cardSize={ui.cardSize}
               initialScrollTop={activeInitialScrollTop}
               onScrollPositionChange={handleViewScrollPositionChange}
               onOpenManga={openMangaInCurrentTab}
