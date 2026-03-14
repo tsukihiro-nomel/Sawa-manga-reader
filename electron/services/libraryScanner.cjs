@@ -326,6 +326,7 @@ function scanManga(mangaPath, persistedState) {
     categoryName: null,
     categoryHidden: false,
     tags,
+    onlineGenres: Array.isArray(metadata.onlineGenres) ? metadata.onlineGenres : [],
     collectionIds,
     hasNewChapters
   };
