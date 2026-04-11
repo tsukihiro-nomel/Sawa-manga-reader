@@ -3,3 +3,12 @@ dist/
 release/
 .DS_Store
 *.log
+release*/
+release*/
+win-unpacked/
+__appImage-x64/
+*.exe
+*.msi
+*.asar
+*.zip
+*.tar.gz
