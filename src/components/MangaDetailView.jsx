@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeftIcon, EditIcon, HeartIcon, LayersIcon, PlayIcon, PlusIcon, ScrollIcon, SearchIcon, SparklesIcon, TagIcon, BookIcon, ClockIcon, ZapIcon } from './Icons.jsx';
+import MediaAsset from './MediaAsset.jsx';
 import { getProgressPercent } from '../utils/reader.js';
 
 // ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ function OnlineMetadataModal({ manga, onClose, onImport }) {
           {results.map((item) => (
             <div key={item.malId} className="online-result-card">
               <div className="online-result-cover">
-                {item.coverUrl ? <img src={item.coverUrl} alt={item.title} /> : <div className="cover-fallback">?</div>}
+                {item.coverUrl ? <img src={item.coverUrl} alt={item.title} className="thumb-smooth" /> : <div className="cover-fallback">?</div>}
               </div>
               <div className="online-result-info">
                 <strong>{item.title}</strong>
@@ -208,18 +209,21 @@ function MangaDetailView({
   manga,
   allTags,
   allCollections,
+  annotations = [],
   initialScrollTop = 0,
   onScrollPositionChange,
   onBack,
   onOpenChapter,
   onOpenChapterInNewTab,
   onOpenChapterInBackgroundTab,
+  onResumeReading,
   onToggleFavorite,
   onPickCover,
   onOpenMetadataEditor,
   onAddTag,
   onAddToCollection,
   onImportOnlineMetadata,
+  onOpenAnnotation,
   onContextMenu
 }) {
   const containerRef = useRef(null);
@@ -260,6 +264,10 @@ function MangaDetailView({
   }, [manga.chapters, chapterSort]);
 
   const displayedChapters = chaptersExpanded ? sortedChapters : sortedChapters.slice(0, 30);
+  const sortedAnnotations = useMemo(
+    () => [...(annotations || [])].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()),
+    [annotations]
+  );
 
   const handleScroll = useCallback((event) => {
     onScrollPositionChange?.(event.currentTarget.scrollTop);
@@ -278,8 +286,20 @@ function MangaDetailView({
       {/* Hero banner — MangaDex style */}
       <div className="detail-hero detail-hero-mdx" onContextMenu={(event) => onContextMenu(event, { type: 'manga', manga })}>
         <div className="detail-cover-card">
-          {manga.coverSrc
-            ? <img src={manga.coverSrc} alt={manga.displayTitle} className="detail-cover" loading="lazy" />
+          {(manga.coverSrc || manga.coverMediaType === 'pdf')
+            ? (
+              <MediaAsset
+                src={manga.coverSrc}
+                alt={manga.displayTitle}
+                className="detail-cover thumb-smooth thumb-media"
+                loading="lazy"
+                mediaType={manga.coverMediaType || 'image'}
+                filePath={manga.coverFilePath}
+                pageNumber={manga.coverPageNumber || 1}
+                maxWidth={440}
+                maxHeight={660}
+              />
+            )
             : <div className="cover-fallback detail-cover-fallback">{manga.displayTitle[0]}</div>
           }
         </div>
@@ -321,7 +341,7 @@ function MangaDetailView({
           {/* Primary actions */}
           <div className="detail-actions-row">
             {resumeChapterId && (
-              <button className="primary-button" onClick={() => onOpenChapter(resumeChapterId)}>
+              <button className="primary-button" onClick={() => (onResumeReading ? onResumeReading() : onOpenChapter(resumeChapterId))}>
                 <PlayIcon size={16} /> Reprendre
               </button>
             )}
@@ -447,6 +467,36 @@ function MangaDetailView({
         </div>
       </div>
 
+      {sortedAnnotations.length > 0 ? (
+        <div className="detail-annotations-panel">
+          <div className="detail-annotations-head">
+            <h3 className="detail-panel-title">
+              <BookIcon size={16} /> Reperes et notes
+            </h3>
+            <span className="detail-annotations-count">{sortedAnnotations.length}</span>
+          </div>
+
+          <div className="detail-annotations-list">
+            {sortedAnnotations.slice(0, 10).map((annotation) => (
+              <button
+                key={annotation.id}
+                type="button"
+                className="detail-annotation-item"
+                onClick={() => onOpenAnnotation?.(annotation)}
+              >
+                <span className="detail-annotation-copy">
+                  <strong>{annotation.label || `Page ${Number(annotation.pageIndex || 0) + 1}`}</strong>
+                  <small>
+                    {annotation.note || `Chapitre ${annotation.chapterId || 'inconnu'} · page ${Number(annotation.pageIndex || 0) + 1}`}
+                  </small>
+                </span>
+                <span className="detail-annotation-jump">Ouvrir</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {/* Chapters section */}
       <div className="detail-chapters-section">
         <div className="section-header">
@@ -480,8 +530,20 @@ function MangaDetailView({
                 onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter })}
               >
                 <div className="chapter-cover-wrap">
-                  {chapter.previewSrc
-                    ? <img src={chapter.previewSrc} alt={chapter.name} className="chapter-cover" loading="lazy" />
+                  {(chapter.previewSrc || chapter.previewMediaType === 'pdf')
+                    ? (
+                      <MediaAsset
+                        src={chapter.previewSrc}
+                        alt={chapter.name}
+                        className="chapter-cover thumb-smooth thumb-media"
+                        loading="lazy"
+                        mediaType={chapter.previewMediaType || chapter.sourceType || 'image'}
+                        filePath={chapter.previewFilePath || chapter.path}
+                        pageNumber={chapter.previewPageNumber || 1}
+                        maxWidth={220}
+                        maxHeight={320}
+                      />
+                    )
                     : <div className="cover-fallback">{realIndex + 1}</div>
                   }
                   <span className={getChapterDotClass(chapter)} />

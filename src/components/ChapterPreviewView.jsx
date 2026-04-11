@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef } from 'react';
 import { ChevronLeftIcon, PlusIcon } from './Icons.jsx';
+import MediaAsset from './MediaAsset.jsx';
 
 function restoreScrollPosition(element, value) {
   if (!element) return () => {};
@@ -100,7 +101,17 @@ function ChapterPreviewView({ manga, chapter, initialScrollTop = 0, onScrollPosi
               onMouseUp={(event) => middleMouseUp(event, () => onReadFromBackgroundTab(page.index))}
               onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter, pageIndex: page.index })}
             >
-              <img src={page.src} alt={`Page ${page.index + 1}`} loading="lazy" />
+              <MediaAsset
+                src={page.src}
+                alt={`Page ${page.index + 1}`}
+                loading="lazy"
+                className="thumb-smooth thumb-media"
+                mediaType={page.sourceType || 'image'}
+                filePath={page.path}
+                pageNumber={page.pdfPageNumber || page.index + 1}
+                maxWidth={240}
+                maxHeight={360}
+              />
               <span>Page {page.index + 1}</span>
             </button>
           ))}
