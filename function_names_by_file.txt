@@ -1,0 +1,67 @@
+Total fonctions: 234
+
+electron/main.cjs (36)
+extractDominantColors, loadPdfJsModule, readPdfPageCount, collectPdfFilesFromState, syncPdfMetaCache, registerLocalAssetProtocol, createWindow, getNsfwOnlyTagIds, buildClientPersistedState, buildStatePayload, detectNewChapters, emitLibraryChanged, restartWatchers, persistReadingProgress, uniqueStrings, stripMarkup, normalizeAltTitles, pickJapaneseTitle, normalizeQuery, computeResultRelevance, inferImageExtensionFromContentType, buildNormalizedResult, buildRemoteHeaders, fetchJson, formatMangaDexResults, searchMangaDex, extractAniListAuthors, extractAniListTags, searchAniList, nhentaiImageExtension, buildNHentaiCoverUrl, extractNHentaiAuthors, extractNHentaiTags, formatNHentaiEntry, searchNHentai, remoteImageToDataUrl
+
+electron/services/libraryScanner.cjs (22)
+hashFromString, makeId, toFileSrc, isImageFile, isPdfFile, naturalCompare, sortNames, safeReadDir, estimatePdfPageCount, makePdfPage, makePage, scanPageFilePaths, getChapterPages, deriveChapterReadingState, deriveMangaReadingState, scanChapterSummary, resolveCover, resolveTagsForManga, resolveCollectionIdsForManga, scanManga, scanLibrary, buildCompactIndex
+
+electron/services/storage.cjs (27)
+ensureDir, getUserDataPath, getStatePath, getLegacyStatePath, getBackupDir, getThumbnailDir, deepMerge, uniqueStrings, getImportedNsfwGenreSet, normalizeTagState, migrateFromV1, loadState, saveState, updateState, createBackup, importBackup, listBackups, createTag, deleteTag, setMangaTags, addTagToManga, removeTagFromManga, createCollection, deleteCollection, updateCollection, addMangaToCollection, removeMangaFromCollection
+
+electron/services/watcher.cjs (3)
+constructor, restart, close
+
+src/App.jsx (67)
+sanitizeReaderState, normalizeView, createTab, sanitizeTab, restoreTabsSession, getTabView, findManga, findChapter, chapterTargetView, makeViewScrollKey, normalizeThemeName, cardSizeMinWidth, buildMangaAggregate, App, boot, refreshWith, pushViewToActive, replaceActiveView, popActiveView, openNewTab, openNewLibraryTab, closeTab, reorderTabs, handleSelectTab, handleScreenChange, openMangaInCurrentTab, openMangaInNewTab, openChapterInCurrentTab, openChapterInNewTab, resumeMangaInCurrentTab, resumeMangaInNewTab, resumeChapterInCurrentTab, toggleSidebarCollapsed, handleSelectCategory, handleOpenAddCategories, handleToggleCategoryHidden, handleRemoveCategory, handleToggleFavorite, handleTrashManga, handleSetReadStatus, handleSetChapterReadStatus, handleResetProgress, handleResetChapterProgress, handleSaveMetadata, handlePickCover, handleCreateTag, handleDeleteTag, handleImportOnlineMetadata, handleToggleTag, handleAddToCollection, handleCreateCollection, handleDeleteCollection, handleUpdateCollection, handleRemoveMangaFromCollection, handleUpdateSettings, handlePickBackgroundImage, handleRemoveBackgroundImage, handleUpdateProgress, handleReaderExit, actionItem, separatorItem, openContextMenu, CollectionPickerModal, OnlineMetadataSearchModal, handleSearch, handleImport, MetadataEditorModal
+
+src/components/ChapterPreviewView.jsx (4)
+restoreScrollPosition, middleMouseDown, middleMouseUp, ChapterPreviewView
+
+src/components/CollectionsView.jsx (5)
+CollectionFormModal, handleSubmit, CollectionDetailView, MDListCard, CollectionsView
+
+src/components/ContextMenu.jsx (1)
+ContextMenu
+
+src/components/Dashboard.jsx (6)
+buildDashboardOrder, DashSection, StatCard, QuickAction, DashboardBlock, Dashboard
+
+src/components/Icons.jsx (2)
+makeIcon, HeartIcon
+
+src/components/LibraryView.jsx (4)
+makeCarouselPicks, HeroCarousel, move, LibraryView
+
+src/components/MangaDetailView.jsx (12)
+restoreScrollPosition, middleMouseDown, middleMouseUp, getReadingStateLabel, getReadingStateClass, getChapterDotClass, formatDate, formatRelativeDate, OnlineMetadataModal, handleSearch, handleImport, MangaDetailView
+
+src/components/MediaAsset.jsx (2)
+PdfCanvasAsset, MediaAsset
+
+src/components/ReaderView.jsx (6)
+clampZoom, ReaderView, next, previous, handleStageToggle, getSinglePageStyle
+
+src/components/SettingsDrawer.jsx (8)
+ColorField, ShortcutRow, startRecording, SettingsDrawer, handleExportSawa, handleImportSawa, handleRecordShortcut, handleResetShortcuts
+
+src/components/Sidebar.jsx (2)
+SidebarNavItem, Sidebar
+
+src/components/TabsBar.jsx (5)
+iconFor, SortableTab, TabsBar, handleWheel, handleDragEnd
+
+src/components/TagManagerModal.jsx (1)
+TagManagerModal
+
+src/components/TitleBar.jsx (5)
+iconFor, SortableTab, TitleBar, handleWheel, handleDragEnd
+
+src/components/TopBar.jsx (1)
+TopBar
+
+src/utils/pdf.js (7)
+getDocumentCacheKey, normalizePdfBinary, readPdfBinary, loadPdfDocument, getPdfPageCount, renderPdfPageToCanvas, buildPdfPageDescriptor
+
+src/utils/reader.js (8)
+sortMangas, buildDoubleSpreadRanges, buildMangaJPSpreadRanges, getProgressPercent, filterMangas, searchMangas, resolveSmartCollection, buildMangaAggregate

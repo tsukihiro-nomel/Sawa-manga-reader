@@ -4,7 +4,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Clock, Copy, Database, Download, Eye, EyeOff, Filter,
   FolderPlus, Fullscreen, Grid2x2, HardDrive, Heart, Home,
-  Image, Keyboard, Layers, Library, Maximize2, Minus,
+  Image, Keyboard, Layers, Library, Lock, Maximize2, Minus,
   MoonStar, PanelLeftClose, PanelLeftOpen, PencilLine, Pin,
   Play, Plus, RefreshCw, ScrollText, Search, Settings2,
   Sparkles, SunMedium, Tag, Trash2, TrendingUp, Upload, X, Zap, ZoomIn, ZoomOut
@@ -67,3 +67,4 @@ export const ArchiveIcon = makeIcon(Archive);
 export const SortIcon = makeIcon(ArrowDownUp);
 export const ZapIcon = makeIcon(Zap);
 export const TrendingUpIcon = makeIcon(TrendingUp);
+export const LockIcon = makeIcon(Lock);

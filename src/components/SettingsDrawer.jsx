@@ -1,22 +1,22 @@
-import { useState } from 'react';
-import { MoonIcon, SparklesIcon, SunIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon, ImageIcon, TrashIcon } from './Icons.jsx';
+﻿import { useState } from 'react';
+import { MoonIcon, SparklesIcon, SunIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon, ImageIcon, TrashIcon, ArchiveIcon, EyeOffIcon, LockIcon } from './Icons.jsx';
 
 const THEMES = [
-  { id: 'dark-night', icon: MoonIcon, title: 'Dark Night', description: 'Noir profond, contraste premium et lumière maîtrisée.' },
-  { id: 'light-paper', icon: SunIcon, title: 'Light Paper', description: "Clair lisible, propre et beaucoup moins cassé qu'avant." },
-  { id: 'coffee-house', icon: SparklesIcon, title: 'Coffee House', description: 'Tons crème, cacao et verre fumé pour une ambiance cosy.' },
-  { id: 'neon-city', icon: SparklesIcon, title: 'Neon City', description: 'Fond encre, cyan électrique et contours glow façon cyberpunk.' }
+  { id: 'dark-night', icon: MoonIcon, title: 'Dark Night', description: 'Noir profond, contraste premium et lumiere maitrisee.' },
+  { id: 'light-paper', icon: SunIcon, title: 'Light Paper', description: "Clair lisible, propre et beaucoup moins casse qu'avant." },
+  { id: 'coffee-house', icon: SparklesIcon, title: 'Coffee House', description: 'Tons creme, cacao et verre fume pour une ambiance cosy.' },
+  { id: 'neon-city', icon: SparklesIcon, title: 'Neon City', description: 'Fond encre, cyan electrique et contours glow facon cyberpunk.' }
 ];
 
 const DEFAULT_SHORTCUTS = {
   nextPage: { label: 'Page suivante', keys: ['ArrowRight'] },
-  prevPage: { label: 'Page précédente', keys: ['ArrowLeft'] },
+  prevPage: { label: 'Page precedente', keys: ['ArrowLeft'] },
   nextChapter: { label: 'Chapitre suivant', keys: ['Ctrl', 'ArrowRight'] },
-  prevChapter: { label: 'Chapitre précédent', keys: ['Ctrl', 'ArrowLeft'] },
-  toggleFullscreen: { label: 'Plein écran', keys: ['F'] },
+  prevChapter: { label: 'Chapitre precedent', keys: ['Ctrl', 'ArrowLeft'] },
+  toggleFullscreen: { label: 'Plein ecran', keys: ['F'] },
   toggleUI: { label: 'Masquer/Afficher l\'UI', keys: ['H'] },
   zoomIn: { label: 'Zoom +', keys: ['+'] },
-  zoomOut: { label: 'Zoom −', keys: ['-'] },
+  zoomOut: { label: 'Zoom -', keys: ['-'] },
   zoomReset: { label: 'Zoom 100%', keys: ['0'] },
   exitReader: { label: 'Quitter la lecture', keys: ['Escape'] }
 };
@@ -81,8 +81,21 @@ function ShortcutRow({ id, shortcut, customKeys, onRecord }) {
   );
 }
 
-export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBackground, onRemoveBackground }) {
+export default function SettingsDrawer({
+  open,
+  ui,
+  vault,
+  onClose,
+  onChange,
+  onPickBackground,
+  onRemoveBackground,
+  onUpdateVaultPrefs,
+  onLockVault,
+  onPanicLock
+}) {
   const shortcuts = ui.shortcuts || {};
+  const vaultConfigured = Boolean(vault?.configured);
+  const vaultLocked = Boolean(vault?.locked);
 
   async function handleExportSawa() {
     try {
@@ -114,17 +127,16 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
       <aside className={`settings-drawer ${open ? 'open' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <div>
-            <h3>Paramètres</h3>
-            <p>Personnalise l'apparence, le lecteur, les raccourcis et gère tes données.</p>
+            <h3>Parametres</h3>
+            <p>Personnalise l'apparence, le lecteur, les raccourcis et gere tes donnees.</p>
           </div>
           <button className="ghost-button" onClick={onClose}>Fermer</button>
         </div>
 
-        {/* ── Thème ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4>Ambiance visuelle</h4>
-            <span>Choisis le thème global de l'app.</span>
+            <span>Choisis le theme global de l'app.</span>
           </div>
           <div className="theme-grid">
             {THEMES.map((t) => {
@@ -142,19 +154,18 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
           </div>
         </div>
 
-        {/* ── Bibliothèque & Accent ── */}
         <div className="settings-section settings-grid-two">
           <section className="settings-card-block">
             <div className="settings-section-heading">
-              <h4>Bibliothèque</h4>
-              <span>Contrôle le filtrage et la densité.</span>
+              <h4>Bibliotheque</h4>
+              <span>Controle le filtrage et la densite.</span>
             </div>
             <label className="settings-toggle">
-              <span>Afficher les catégories masquées</span>
+              <span>Afficher les categories masquees</span>
               <input type="checkbox" checked={ui.showHiddenCategories} onChange={(e) => onChange({ showHiddenCategories: e.target.checked })} />
             </label>
             <label className="settings-toggle">
-              <span>Aperçu des pages avant lecture</span>
+              <span>Apercu des pages avant lecture</span>
               <input type="checkbox" checked={ui.showPagePreviewBeforeReading} onChange={(e) => onChange({ showPagePreviewBeforeReading: e.target.checked })} />
             </label>
             <div className="settings-subsection">
@@ -169,15 +180,14 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
 
           <section className="settings-card-block">
             <div className="settings-section-heading">
-              <h4>Accent et détails</h4>
+              <h4>Accent et details</h4>
               <span>Choisis une couleur principale et secondaire.</span>
             </div>
-            <ColorField label="Couleur d'accent" value={ui.accent || '#8b5cf6'} onChange={(accent) => onChange({ accent })} helper="Boutons actifs, sélection, focus." />
-            <ColorField label="Couleur de détail" value={ui.accentAlt || '#38bdf8'} onChange={(accentAlt) => onChange({ accentAlt })} helper="Dégradés secondaires, glows." />
+            <ColorField label="Couleur d'accent" value={ui.accent || '#8b5cf6'} onChange={(accent) => onChange({ accent })} helper="Boutons actifs, selection, focus." />
+            <ColorField label="Couleur de detail" value={ui.accentAlt || '#38bdf8'} onChange={(accentAlt) => onChange({ accentAlt })} helper="Degrades secondaires, glows." />
           </section>
         </div>
 
-        {/* ── Image de fond ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4><ImageIcon size={16} /> Image de fond</h4>
@@ -208,7 +218,7 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
           {ui.backgroundImage && (
             <>
               <div className="settings-subsection">
-                <h5>Opacité de l'image ({Math.round((ui.backgroundOpacity ?? 0.15) * 100)}%)</h5>
+                <h5>Opacite de l'image ({Math.round((ui.backgroundOpacity ?? 0.15) * 100)}%)</h5>
                 <input
                   type="range"
                   min="0" max="100" step="1"
@@ -216,7 +226,7 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
                   onChange={(e) => onChange({ backgroundOpacity: parseInt(e.target.value, 10) / 100 })}
                   className="settings-slider"
                 />
-                <div className="settings-note">Baisse l'opacité pour voir le thème en fond.</div>
+                <div className="settings-note">Baisse l'opacite pour voir le theme en fond.</div>
               </div>
 
               <div className="settings-subsection">
@@ -242,7 +252,7 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
                   <div className="bg-extracted-colors">
                     <span className="bg-color-swatch" style={{ background: ui.backgroundAccent }} title={ui.backgroundAccent} />
                     <span className="bg-color-swatch" style={{ background: ui.backgroundAccentAlt || ui.backgroundAccent }} title={ui.backgroundAccentAlt} />
-                    <span className="muted-text" style={{ fontSize: '0.75rem' }}>Couleurs détectées</span>
+                    <span className="muted-text" style={{ fontSize: '0.75rem' }}>Couleurs detectees</span>
                   </div>
                 )}
               </div>
@@ -250,11 +260,10 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
           )}
         </div>
 
-        {/* ── Lecture ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4>Lecture</h4>
-            <span>Paramètres du lecteur de chapitres.</span>
+            <span>Parametres du lecteur de chapitres.</span>
           </div>
           <div className="settings-subsection">
             <h5>Seuil de marquage lu automatique</h5>
@@ -270,23 +279,72 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
           </label>
           <div className="settings-note">Passer automatiquement au chapitre suivant en fin de chapitre.</div>
           <label className="settings-toggle">
-            <span>Précharger le chapitre suivant</span>
+            <span>Precharger le chapitre suivant</span>
             <input type="checkbox" checked={!!ui.preloadNextChapter} onChange={(e) => onChange({ preloadNextChapter: e.target.checked })} />
           </label>
           <label className="settings-toggle">
-            <span>Masquer l'UI après inactivité</span>
+            <span>Masquer l'UI apres inactivite</span>
             <input type="checkbox" checked={!!ui.autoHideReaderUI} onChange={(e) => onChange({ autoHideReaderUI: e.target.checked })} />
           </label>
           <div className="settings-subsection">
-            <h5>Direction de lecture par défaut</h5>
+            <h5>Direction de lecture par defaut</h5>
             <div className="segmented-control segmented-control-full">
-              <button className={ui.readDirection === 'ltr' ? 'active' : ''} onClick={() => onChange({ readDirection: 'ltr' })}>Gauche → Droite</button>
-              <button className={ui.readDirection === 'rtl' ? 'active' : ''} onClick={() => onChange({ readDirection: 'rtl' })}>Droite → Gauche</button>
+              <button className={ui.readDirection === 'ltr' ? 'active' : ''} onClick={() => onChange({ readDirection: 'ltr' })}>Gauche {'->'} Droite</button>
+              <button className={ui.readDirection === 'rtl' ? 'active' : ''} onClick={() => onChange({ readDirection: 'rtl' })}>Droite {'->'} Gauche</button>
             </div>
           </div>
         </div>
 
-        {/* ── Raccourcis clavier ── */}
+        <div className="settings-section settings-grid-two">
+          <section className="settings-card-block">
+            <div className="settings-section-heading">
+              <h4><ArchiveIcon size={16} /> Coffre & Privacy</h4>
+              <span>Pilote rapidement les options de confidentialite.</span>
+            </div>
+            <label className="settings-toggle">
+              <span>Flouter les couvertures privees</span>
+              <input
+                type="checkbox"
+                checked={!!vault?.blurCovers}
+                disabled={!vaultConfigured || vaultLocked || !onUpdateVaultPrefs}
+                onChange={(e) => onUpdateVaultPrefs?.({ blurCovers: e.target.checked })}
+              />
+            </label>
+            <label className="settings-toggle">
+              <span>Stealth mode (masquage strict)</span>
+              <input
+                type="checkbox"
+                checked={!!vault?.stealthMode}
+                disabled={!vaultConfigured || vaultLocked || !onUpdateVaultPrefs}
+                onChange={(e) => onUpdateVaultPrefs?.({ stealthMode: e.target.checked })}
+              />
+            </label>
+            <div className="settings-grid-two">
+              <button className="ghost-button" disabled={!vaultConfigured || vaultLocked || !onLockVault} onClick={() => onLockVault?.()}>
+                <LockIcon size={16} /> Reverrouiller le coffre
+              </button>
+              <button className="ghost-button ghost-button-danger" disabled={!vaultConfigured || vaultLocked || !onPanicLock} onClick={() => onPanicLock?.()}>
+                <EyeOffIcon size={16} /> Panic lock
+              </button>
+            </div>
+            <div className="settings-note">
+              {vaultConfigured
+                ? (vaultLocked ? 'Le coffre est verrouille: deverrouille-le pour modifier ses options.' : 'Le coffre se verrouille automatiquement a la fermeture de l application.')
+                : 'Configure d abord un code PIN dans la vue Coffre pour activer ces options.'}
+            </div>
+          </section>
+
+          <section className="settings-card-block">
+            <div className="settings-section-heading">
+              <h4>Recherche & Queue</h4>
+              <span>Rappels des nouvelles fonctions de navigation.</span>
+            </div>
+            <div className="settings-note">Queue de lecture: ouvre/ferme avec Ctrl+Shift+Q depuis la barre d onglets.</div>
+            <div className="settings-note">Recherche avancee: utilise `tag:`, `status:`, `private:`, `author:` et `chapters&gt;`.</div>
+            <div className="settings-note">Les filtres reconnus restent visibles en chips dans la barre de recherche.</div>
+          </section>
+        </div>
+
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4><KeyboardIcon size={16} /> Raccourcis clavier</h4>
@@ -304,21 +362,20 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
             ))}
           </div>
           <button className="ghost-button" onClick={handleResetShortcuts} style={{ marginTop: 8 }}>
-            Réinitialiser les raccourcis
+            Reinitialiser les raccourcis
           </button>
         </div>
 
-        {/* ── Métadonnées en ligne ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
-            <h4>Métadonnées en ligne</h4>
-            <span>Enrichis ta bibliothèque avec des données en ligne.</span>
+            <h4>Metadonnees en ligne</h4>
+            <span>Enrichis ta bibliotheque avec des donnees en ligne.</span>
           </div>
           <label className="settings-toggle">
-            <span>Activer les métadonnées en ligne</span>
+            <span>Activer les metadonnees en ligne</span>
             <input type="checkbox" checked={!!ui.onlineMetadata} onChange={(e) => onChange({ onlineMetadata: e.target.checked })} />
           </label>
-          <div className="settings-note">Le logiciel reste entièrement fonctionnel hors ligne.</div>
+          <div className="settings-note">Le logiciel reste entierement fonctionnel hors ligne.</div>
           {ui.onlineMetadata && (
             <div className="settings-subsection">
               <label className="settings-toggle">
@@ -330,18 +387,33 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
                 <input type="checkbox" checked={!!ui.onlineDescriptionAllowed} onChange={(e) => onChange({ onlineDescriptionAllowed: e.target.checked })} />
               </label>
               <label className="settings-toggle">
+                <span>Afficher les resultats NSFW (nHentai)</span>
+                <input type="checkbox" checked={!!ui.allowNsfwSources} onChange={(e) => onChange({ allowNsfwSources: e.target.checked })} />
+              </label>
+              <div className="settings-note">Desactive = nHentai est completement retire des recherches de metadonnees.</div>
+              <label className="settings-toggle">
                 <span>Confirmer avant import</span>
                 <input type="checkbox" checked={!!ui.onlineConfirmBeforeImport} onChange={(e) => onChange({ onlineConfirmBeforeImport: e.target.checked })} />
               </label>
             </div>
           )}
+          <div className="settings-subsection">
+            <h5>ComicInfo.xml local</h5>
+            <label className="settings-toggle">
+              <span>Support actif (CBZ + sidecar)</span>
+              <input type="checkbox" checked readOnly />
+            </label>
+            <div className="settings-note">
+              Lecture de ComicInfo.xml incluse: detection locale pendant le scan et import manuel depuis
+              le menu contextuel (clic droit manga {'>'} Importer ComicInfo) ou l editeur de metadonnees.
+            </div>
+          </div>
         </div>
 
-        {/* ── Données & Sauvegarde ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
-            <h4><HardDriveIcon size={16} /> Données & Sauvegarde</h4>
-            <span>Exporte ou importe tes données au format .sawa pour les transférer entre appareils.</span>
+            <h4><HardDriveIcon size={16} /> Donnees & Sauvegarde</h4>
+            <span>Exporte ou importe tes donnees au format .sawa pour les transferer entre appareils.</span>
           </div>
 
           <div className="settings-grid-two">
@@ -353,12 +425,11 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
             </button>
           </div>
           <div className="settings-note">
-            Le fichier .sawa contient ta progression, tes favoris, tes tags, tes collections et tes paramètres.
-            Les fichiers manga eux-mêmes ne sont pas inclus.
+            Le fichier .sawa contient ta progression, tes favoris, tes tags, tes collections et tes parametres.
+            Les fichiers manga eux-memes ne sont pas inclus.
           </div>
         </div>
 
-        {/* ── Maintenance ── */}
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4>Maintenance</h4>
@@ -374,12 +445,11 @@ export default function SettingsDrawer({ open, ui, onClose, onChange, onPickBack
           </div>
         </div>
 
-        {/* ── À propos ── */}
         <div className="settings-section">
-          <div className="settings-section-heading"><h4>À propos</h4></div>
+          <div className="settings-section-heading"><h4>A propos</h4></div>
           <div className="settings-note">
-            <strong>Sawa Manga Library v2.0.0</strong><br />
-            Bibliothèque manga locale, premium, intelligente et entièrement hors ligne.
+            <strong>Sawa Manga Library v3.0.0</strong><br />
+            Bibliotheque manga locale, premium, intelligente et entierement hors ligne.
           </div>
         </div>
 

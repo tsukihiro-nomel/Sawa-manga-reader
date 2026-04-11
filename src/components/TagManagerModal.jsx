@@ -1,5 +1,5 @@
-import { useState, memo } from 'react';
-import { CheckIcon, CloseIcon, PlusIcon, TrashIcon, TagIcon } from './Icons.jsx';
+import { useState, useMemo, memo } from 'react';
+import { CheckIcon, CloseIcon, PlusIcon, SearchIcon, TrashIcon, TagIcon } from './Icons.jsx';
 
 const DEFAULT_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e',
@@ -11,9 +11,15 @@ function TagManagerModal({ manga, allTags, onToggleTag, onCreateTag, onDeleteTag
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState(DEFAULT_COLORS[0]);
   const [showCreate, setShowCreate] = useState(false);
+  const [tagSearch, setTagSearch] = useState('');
 
   const assignedTagIds = new Set((manga?.tags || []).map(t => t.id));
-  const tagList = Object.values(allTags || {});
+  const tagList = useMemo(() => Object.values(allTags || {}), [allTags]);
+  const filteredTags = useMemo(() => {
+    const query = tagSearch.trim().toLowerCase();
+    if (!query) return tagList;
+    return tagList.filter((tag) => (tag?.name || '').toLowerCase().includes(query));
+  }, [tagList, tagSearch]);
 
   const handleCreateTag = () => {
     const trimmed = newTagName.trim();
@@ -42,32 +48,48 @@ function TagManagerModal({ manga, allTags, onToggleTag, onCreateTag, onDeleteTag
         </div>
 
         {/* Tag grid */}
-        <div className="tag-modal-section">
+        <div className="tag-modal-section tag-modal-section-flex">
           <span className="tag-modal-label">
             {tagList.length > 0 ? 'Clique pour activer/désactiver' : 'Aucun tag créé'}
           </span>
-          <div className="tag-modal-grid">
-            {tagList.map(tag => {
-              const isSelected = assignedTagIds.has(tag.id);
-              return (
-                <button
-                  key={tag.id}
-                  className={`tag-chip ${isSelected ? 'tag-chip-active' : ''}`}
-                  style={{ '--tc': tag.color }}
-                  onClick={() => onToggleTag(manga.id, tag.id)}
-                >
-                  {isSelected && <CheckIcon size={12} />}
-                  <span>{tag.name}</span>
+          {tagList.length > 0 && (
+            <div className="modal-search-row">
+              <SearchIcon size={15} />
+              <input
+                className="modal-search-input"
+                type="text"
+                value={tagSearch}
+                onChange={(e) => setTagSearch(e.target.value)}
+                placeholder="Rechercher un tag"
+              />
+            </div>
+          )}
+          <div className="tag-modal-grid-scroll">
+            <div className="tag-modal-grid">
+              {filteredTags.length > 0 ? filteredTags.map(tag => {
+                const isSelected = assignedTagIds.has(tag.id);
+                return (
                   <button
-                    className="tag-chip-delete"
-                    onClick={(e) => { e.stopPropagation(); onDeleteTag(tag.id); }}
-                    title="Supprimer"
+                    key={tag.id}
+                    className={`tag-chip ${isSelected ? 'tag-chip-active' : ''}`}
+                    style={{ '--tc': tag.color }}
+                    onClick={() => onToggleTag(manga.id, tag.id)}
                   >
-                    <TrashIcon size={11} />
+                    {isSelected && <CheckIcon size={12} />}
+                    <span>{tag.name}</span>
+                    <button
+                      className="tag-chip-delete"
+                      onClick={(e) => { e.stopPropagation(); onDeleteTag(tag.id); }}
+                      title="Supprimer"
+                    >
+                      <TrashIcon size={11} />
+                    </button>
                   </button>
-                </button>
-              );
-            })}
+                );
+              }) : (
+                <p className="muted-text modal-empty-state">Aucun tag ne correspond à la recherche.</p>
+              )}
+            </div>
           </div>
         </div>
 

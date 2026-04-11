@@ -1,0 +1,446 @@
+--- PAGE 1 ---
+Nouvelles fonctions “local-first” pour Sawa
+Manga Library
+Résumé exécutif
+Ton positionnement (“premium, local, respectueux de la vie privée”) est ultra cohérent… et il ouvre un
+terrain de features où tu peux battre pas mal d’apps qui misent sur le cloud. Le pattern qui ressort des
+meilleures apps manga/comics modernes, c’est : support de formats/archives solide, mise à jour de
+bibliothèque sans friction, lecteur très “cinéma” (crop, filtres, guided/panel view), organisation
+intelligente (smart lists / next book), et interop métadonnées pour que la collection reste portable. 
+Les propositions ci-dessous sont pensées pour respecter tes limites (pas de sync cloud, pas d’OPDS, pas
+de scraping automatique), tout en ajoutant des “super-pouvoirs” 100% offline : ingestion d’archives
+(CBZ/CBR/CB7/CBT/PDF + dossiers d’images), file monitoring, déduplication, import/export
+ComicInfo.xml, “next book” fiable, lecteur avec auto-crop + filtres + upscale, guided view, recherche
+avancée (FTS), et (option premium) OCR on-device. 
+Ce que ton choix “tout local” implique côté produit
+Le “local-first” n’est pas juste “pas de cloud”. Dans la littérature, c’est un ensemble d’idéaux où l’app
+reste utilisable offline, avec une sensation de latence quasi nulle, une meilleure préservation long-
+terme, et plus de contrôle utilisateur. Tu as déjà l’essentiel (tout sur la machine, export/import), et
+c’est exactement le genre de posture que des auteurs comme Martin Kleppmann
+ et l’équipe 
+entity["organization","Ink & Switch","research lab"] défendent : l’utilisateur “possède” ses
+données, et l’UX ne doit pas dépendre d’un service externe. 
+Le bonus “sous-côté” : ton design réduit mécaniquement l’exposition de données personnelles, ce qui
+colle bien aux principes de minimisation (ne collecter et conserver que ce qui est nécessaire). Même si
+Sawa n’est pas un service web, ce référentiel aide à cadrer tes choix “privacy by design”. 
+Conclusion produit (en mode très concret) : comme tu n’as pas cloud/OPDS/scraping, tes nouveaux
+features “gagnants” doivent maximiser :
+la qualité du lecteur (c’est là que l’utilisateur passe du temps),
+la qualité de l’ingestion (formats, scans, updates, erreurs),
+la qualité de l’organisation (smartness sans dépendre d’Internet),
+la portabilité (standards de métadonnées + export propre). 
+Benchmarks manga/comics : ce que font les meilleures apps
+Beaucoup d’apps “référence” font un truc simple : elles investissent à fond dans l’import et dans le
+confort de lecture, puis seulement après dans l’organisation.
+1
+2
+3
+4
+5
+• 
+• 
+• 
+• 
+6
+1
+
+
+--- PAGE 2 ---
+Formats & ingestion : la base non-négociable
+Côté formats, les apps grand public mettent en avant la compatibilité avec les archives comics (CBZ/
+CBR…) et les PDF, parce que c’est la réalité des bibliothèques locales. Par exemple, CDisplayEx
+communique directement sur la lecture de nombreux formats (CBR/CBZ/PDF, etc.) et une lecture
+“fluide” avec chargement immédiat. 
+Sur iPad, Chunky met aussi l’accent sur CBZ/CBR/CBT/PDF. 
+Panels annonce la compatibilité CBR/CBZ/CB7/PDF + images (dont WebP) et même un “comic ePUB” (à
+distinguer d’un ePUB texte). 
+Mise à jour de bibliothèque : “zéro effort”, sinon ça perd l’utilisateur
+Les apps qui gèrent de grosses bibliothèques proposent souvent une mise à jour incrémentale (plutôt
+que “rescan complet” en permanence), et parfois de la surveillance de fichiers. CDisplayEx documente
+un “file monitoring” capable de mettre à jour la bibliothèque quand un fichier est ajouté/supprimé/
+déplacé (désactivé par défaut). 
+Dans le monde “serveur local”, Komga distingue scan (détecter changements), analyse (extraire
+propriétés), et deep scan si le FS se comporte bizarrement, et s’appuie sur le “last modified time” des
+dossiers pour décider de rescanner. 
+Lecture premium : crop, filtres, et modes “cinéma”
+Les options qui reviennent :
+Crop des marges / borders : CDisplayEx a un réglage “Crop Border” (suppression de bordures
+vides) avec valeur par défaut globale puis override par livre. 
+Corrections visuelles : CDisplayEx propose “Color corrections”. 
+Upscaling / remaster : Chunky pousse “Smart upscaling” et “Auto contrast/tint” pour scans
+vieillots / basse résolution. 
+Filtres avancés : Panels liste des page filters (reduce noise, increase sharpness, reduce moiré,
+crop borders). 
+Et côté user demand : sur le forum Panels, des gens citent le “crop margins” de Chunky comme
+raison de rester dessus. Ça signale un vrai poids UX. 
+Guided view / panel-by-panel : lecture “immersive à la ComiXology”
+Le “guided view” (panel-by-panel) est une approche où l’app fait naviguer panneau par panneau,
+souvent avec animation, pour reproduire un rythme “cinématographique” et rendre lisible sur petits
+écrans. Un article académique décrit explicitement Guided View comme une lecture panneau-par-
+panneau adaptée au mobile, mimant la lecture d’un comics papier. 
+Panels mentionne aussi des presets incluant une lecture “panel-by-panel guided view” (et même des
+features expérimentales autour de la navigation panneau par panneau). 
+Organisation : “next book”, smart lists, recherche avancée
+Next book / suggestions : CDisplayEx explique un système de suggestions et de “next book”
+basé sur extraction du nom de série + numéro depuis le filename, avec options pour éviter les
+collisions (ex. chercher uniquement dans le dossier courant). 
+Smart lists & opérateurs de recherche : le changelog de YACReader mentionne une “Recent
+smart list”, des tags textuels queryables, et des opérateurs (==, <, >, etc.) + filtres sur dates du
+type added > 7 . 
+7
+8
+9
+10
+11
+• 
+12
+• 
+12
+• 
+8
+• 
+9
+13
+14
+9
+• 
+12
+• 
+15
+2
+
+
+--- PAGE 3 ---
+Métadonnées : l’“interop” est le cheat code des bibliothèques locales
+Dès que tu touches à une collection locale, tu te heurtes à la question : “si je change d’app, je perds
+tout ?”. Beaucoup d’outils se basent sur ComicInfo.xml, historiquement lié à ComicRack, pour
+transporter des métadonnées dans une archive. Kavita résume ça très simplement : comics/manga
+utilisent souvent un fichier ComicInfo.xml à la racine de l’archive. 
+Des outils comme Comicbox documentent aussi la lecture/écriture de plusieurs schémas
+(ComicInfo.xml, MetronInfo.xml, ComicBookInfo…). 
+YACReader parle d’améliorations de compatibilité ComicInfo.xml. 
+Chunky dit comprendre des tags ComicRack et ComicBookLover. 
+Nouvelles fonctions à fort impact compatibles avec tes
+contraintes
+Je te propose un set de features “packagées” (tu peux les vendre/activer progressivement), toutes
+compatibles avec “100% local” et “pas de scraping auto”.
+Pack ingestion : archives, formats, et lecture sans friction
+Idée : Sawa doit être “agnostique au conteneur”. Que l’utilisateur ait des dossiers d’images, des CBZ,
+des CBR, des PDF, voire des images modernes, l’app doit dire “ok” sans drama.
+Pourquoi c’est stratégique : c’est la promesse implicite quand tu dis “bibliothèque locale”. Les leaders
+communiquent dessus (CDisplayEx, Chunky, Panels) et Komga analyse explicitement container +
+formats d’images. 
+Spéc suggestion (compatible Windows/Linux) :
+Support “books” : CBZ/ZIP, CBR/RAR (si tu peux), CB7/7z, CBT/TAR, PDF, folder-of-images as book
+(dossier = chapitre/volume).
+Lecture “in-place” (streaming depuis l’archive) + cache intelligent des pages (tu as déjà
+préchargement du chapitre suivant, donc tu as la vibe).
+Analyse légère lors de l’import : nombre de pages, dimensions, format image, page double
+détectée… (Komga collecte déjà type de container et formats d’image ; YACReader a aussi des
+heuristiques sur spreads). 
+Gestion WebP : Panels supporte WebP et Komga détecte WEBP. 
+Pack “bibliothèque vivante” : file monitoring + scans incrémentaux + deep scan
+Idée : éviter le “rescan complet” comme routine. Tu veux un moteur qui :
+détecte les changements (watcher),
+analyse seulement ce qui a bougé,
+et propose un deep scan volontaire si le FS ment (disques externes, SMB, etc.).
+Benchmark : CDisplayEx documente un file monitoring (update auto), et Komga explique scan vs deep
+scan + usage du “last modified”. 
+16
+17
+15
+8
+18
+• 
+• 
+• 
+19
+• 
+20
+• 
+• 
+• 
+21
+3
+
+
+--- PAGE 4 ---
+Bonus UX premium :
+un indicateur “bibliothèque à jour”,
+une timeline claire (“+12 nouveaux chapitres détectés”),
+et une option “scan silencieux au démarrage” (avec seuil CPU/IO pour rester discret).
+Pack “organisation intelligente” : next book fiable + file d’attente de lecture
+Tu as déjà reprise/onglets/workspaces, donc le next step logique c’est : réduire les micro-frictions (“je
+lis quoi ensuite ?”).
+Benchmark : CDisplayEx a un système “Open Next Book” et “Enable suggestions”, basé sur série +
+numéro extraits du filename, avec options pour éviter les collisions entre séries homonymes. 
+Spéc suggestion :
+Un mode “Next” multi-niveaux : page → chapitre → volume → série.
+Détection d’ordre : d’abord métadonnées (numéro volume/chapitre), sinon fallback filename
+parsing (comme CDisplayEx), sinon fallback “ordre dans dossier”. 
+Une “Reading Queue” locale : tu épingles des prochains volumes/chapitres (ça se combine super
+bien avec ton UX “browser-like” : ouvrir la queue comme un onglet persistant).
+Pack métadonnées “portable” : import/export standard (ComicInfo.xml) + stratégie
+de fusion
+Tu as volontairement “pas de scraping auto”, mais tu peux quand même devenir la meilleure app de
+gestion grâce à l’interop.
+Constat : ComicInfo.xml est un format très répandu pour transporter des métadonnées dans les
+archives comics/manga. 
+YACReader et Chunky mentionnent explicitement la compatibilité avec ces écosystèmes
+(ComicInfo.xml / ComicRack / ComicBookLover tags). 
+Fonctions concrètes :
+Import embedded : si un CBZ contient ComicInfo.xml, tu pré-remplis titre/numéro/auteurs/tags.
+Export embedded : quand l’utilisateur modifie des champs (titre, auteurs, tags, résumé…), Sawa
+peut écrire (optionnellement) ComicInfo.xml dans l’archive ou à côté (sidecar) pour garder la
+portabilité.
+Templates de “mapping” : tes tags internes ↔ tags ComicInfo.
+Support “schémas alternatifs” (optionnel) : Comicbox liste aussi MetronInfo.xml et autres
+schémas ; à minima, lire/ignorer proprement sans casser. 
+Stratégie anti-drama (vraiment importante) : inspirée de Komga, qui permet de verrouiller/
+déverrouiller des champs pour éviter que des refresh écrasent tes edits. Tu peux appliquer le même
+principe quand tu importes depuis MangaDex : “ces champs sont verrouillés, n’écrase pas”. 
+Pack lecteur “premium” : auto-crop, filtres, et “remaster” offline
+Ton lecteur est déjà solide (modes, zoom, webtoon, auto-next…). Le gap “wow” vient souvent des filtres
+visuels et du crop intelligent.
+• 
+• 
+• 
+22
+• 
+• 
+12
+• 
+23
+24
+• 
+• 
+• 
+• 
+17
+25
+4
+
+
+--- PAGE 5 ---
+Pourquoi ça compte :
+CDisplayEx a Crop Border + Color corrections déjà en standard. 
+Chunky met en avant smart upscaling + auto contrast/tint. 
+Panels liste des filtres lourds (noise/sharpness/moiré/crop). 
+Et la communauté Panels cite littéralement le crop margins comme feature qui “retient” sur
+Chunky. 
+Spéc suggestion (UX) :
+Un panneau “Visuel” dans le lecteur, avec presets :
+“Manga scan” (auto-contrast + crop + léger sharpen),
+“Vintage comics” (denoise + moiré),
+“Webtoon clean” (sharpen doux, pas de crop agressif).
+Un override par manga (et un default global), comme CDisplayEx le fait pour certains réglages. 
+Un mode “comparaison” (avant/après) rapide pour éviter que l’utilisateur se perde.
+Pack immersion : guided view / panel-by-panel local
+Même si c’est historiquement fort sur mobile, le panel-by-panel peut devenir un mode “focus” premium
+sur desktop (surtout si tu veux une lecture vraiment immersive).
+Définition : la littérature décrit Guided View comme une lecture “panel-by-panel” adaptée au mobile,
+mimant la lecture papier. 
+Panels propose déjà des presets incluant “panel-by-panel guided view”. 
+Approche réaliste (sans IA magique obligatoire) :
+Mode A (simple, robuste) : guided view “manuel” via marqueurs (l’utilisateur définit des cadres/
+panels sur quelques pages, Sawa retient).
+Mode B (semi-auto) : heuristique sur gutters (lignes blanches/noires) + fallback manuel.
+Animation discrète entre panels (tu veux rester dans ton identité : “animations discrètes”, pas un
+parc d’attraction).
+Pack recherche & puissance : requêtes avancées + full-text local
+Ta recherche est déjà globale (titre/auteur/infos). Le saut premium : recherche structurée + full-text
+performant.
+Benchmark : YACReader propose des opérateurs de recherche (exact match, <, >, etc.) et des filtres
+temporels comme added > 7 . 
+Brique technique : SQLite FTS5 est une extension dédiée à la recherche plein texte “efficiente sur une
+grande collection de documents”. 
+Ce que ça débloque :
+Une barre type “command/search” : tag:romance status:unread added<30 
+missing:cover .
+Recherche dans : synopsis, notes, annotations, aliases.
+“Smart collections” plus puissantes sans recalcul lourd (FTS + index).
+• 
+12
+• 
+8
+• 
+9
+• 
+13
+• 
+• 
+• 
+• 
+• 
+12
+• 
+14
+9
+• 
+• 
+• 
+15
+26
+• 
+• 
+• 
+5
+
+
+--- PAGE 6 ---
+Pack maintenance “pro” : déduplication + détection de doublons visuels
+Tu as déjà une Maintenance qui détecte “doublons probables”. Tu peux la rendre beaucoup plus fiable
+avec une vraie approche “fuzzy”.
+Benchmark : CDisplayEx mentionne la déduplication quand deux locations se recoupent. 
+Approche : perceptual hashing (hash perceptuel) pour détecter des images “visuellement identiques”
+malgré compression / tailles différentes.
+Attention licensing : pHash est une librairie de perceptual hashing sous GPLv3. Si Sawa est un produit
+premium propriétaire, intégrer pHash directement peut être juridiquement incompatible (à valider),
+donc soit tu implémentes un algo simple en interne, soit tu choisis une lib permissive. 
+Pack privacy mode : incognito, “panic lock”, et coffre plus “stealth”
+Tu as déjà un coffre + flou covers + verrouillage. Le next level, c’est d’ajouter des modes
+“comportementaux” :
+Incognito : lire sans que la session/historique apparaisse dans “Récents”.
+Panic lock : raccourci qui verrouille instantanément le coffre et floute l’UI.
+Règles de masquage : covers floutées partout sauf quand tu hover/click (option).
+Benchmark : Panels mentionne “Secure your content” (password/biométrie) et un “Incognito mode”
+pour cacher les sessions. 
+Chunky mentionne aussi des contrôles parentaux avec passcode-lock. 
+Pack premium optionnel : OCR 100% on-device pour recherche dans les pages
+C’est le genre de feature “wow” qui reste compatible avec ta philosophie, parce que ça se fait
+localement.
+Brique technique : Tesseract est un moteur OCR open source (Apache 2.0) ; la doc et le repo décrivent
+qu’il fournit un moteur OCR (libtesseract + CLI), avec un cœur moderne (LSTM depuis v4). 
+Usage produit :
+OCR uniquement sur demande (“indexer ce tome”), ou en tâche de fond “quand le PC est idle”.
+Stockage local : index textuel par page (utilisable par FTS).
+Résultat UX : tu peux rechercher un terme vu dans une bulle (“le nom d’un perso”) et retomber
+sur la page.
+Priorisation pragmatique
+Sans te connaître ton planning dev exact, voilà un découpage “impact d’abord” (et qui colle à ton
+identité premium) :
+À faire en premier (effet waouh + fondations)
+Formats/archives + lecture in-place + file monitoring incrémental : c’est la base pour que l’app “absorbe”
+le monde réel (CBZ/CBR/PDF, dossiers d’images) et pour que la bibliothèque soit vivante sans rescan
+manuel. 
+10
+27
+• 
+• 
+• 
+9
+8
+28
+• 
+• 
+• 
+29
+6
+
+
+--- PAGE 7 ---
+Ensuite (différenciation premium visible)
+Auto-crop + filtres (noise/sharpness/moiré) + presets lecteur : c’est ce qui transforme une app
+“fonctionnelle” en app “impossible de revenir en arrière”. 
+Puis (organisation smart sans Internet)
+Next book + reading queue + recherche avancée : tu crées une sensation “Netflix pour ma collection
+locale”, sans recommandations externes. 
+Enfin (premium deluxe / power users)
+Interop ComicInfo.xml + OCR : ce sont des features qui parlent aux gros collectionneurs (portabilité) et
+aux power users (search inside pages). 
+Points d’attention techniques et juridiques
+Licences : si tu utilises des libs pour archives, hashing, OCR, check systématiquement les licences.
+Exemple concret : pHash est GPLv3 (risk si app propriétaire), alors que Tesseract est Apache 2.0
+(beaucoup plus “business-friendly” en général). 
+Mise à jour incrémentale : une stratégie “scan/analyse/deep scan” est utile quand tu gères disques
+externes, NAS, ou FS capricieux. Komga explicite bien cette séparation et l’usage du “last modified”. Ça
+peut t’éviter des bugs fantômes. 
+Recherche performante : si tu vas vers full-text + requêtes complexes, une brique du type SQLite FTS5
+est conçue pour ça (et te permet de rester 100% local). 
+Interop métadonnées : écrire dans des archives (CBZ/ZIP) implique de réécrire le fichier : attention à la
+robustesse (backup temporaire, rewrite atomique, rollback si crash). C’est le prix à payer pour une vraie
+portabilité à long terme, mais c’est un “premium move” très cohérent avec le local-first. 
+https://martin.kleppmann.com/papers/local-first.pdf
+https://martin.kleppmann.com/papers/local-first.pdf
+https://www.cdisplayex.com/mobile/settings/
+https://www.cdisplayex.com/mobile/settings/
+https://apps.apple.com/ma/app/chunky-comic-reader/id663567628?l=fr
+https://apps.apple.com/ma/app/chunky-comic-reader/id663567628?l=fr
+https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/data-protection-principles/a-
+guide-to-the-data-protection-principles/data-minimisation/
+https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/data-protection-principles/a-guide-to-the-data-
+protection-principles/data-minimisation/
+https://apps.apple.com/ee/app/panels-comic-reader/id1236567663
+https://apps.apple.com/ee/app/panels-comic-reader/id1236567663
+https://www.cdisplayex.com/
+https://www.cdisplayex.com/
+https://www.cdisplayex.com/mobile/files/
+https://www.cdisplayex.com/mobile/files/
+30
+31
+32
+33
+11
+26
+34
+1
+4
+2
+12
+22
+30
+31
+3
+8
+5
+6
+9
+20
+7
+18
+10
+21
+29
+7
+
+
+--- PAGE 8 ---
+https://komga.org/docs/guides/scan-analysis-refresh/
+https://komga.org/docs/guides/scan-analysis-refresh/
+https://community.panels.app/t/features-request-upscaling-and-crop-margins-borders/1440
+https://community.panels.app/t/features-request-upscaling-and-crop-margins-borders/1440
+https://theijournal.ca/index.php/ijournal/article/view/28126/20720
+https://theijournal.ca/index.php/ijournal/article/view/28126/20720
+https://github.com/YACReader/yacreader/blob/develop/CHANGELOG.md
+https://github.com/YACReader/yacreader/blob/develop/CHANGELOG.md
+https://wiki.kavitareader.com/guides/metadata/comics/
+https://wiki.kavitareader.com/guides/metadata/comics/
+https://comicbox.readthedocs.io/
+https://comicbox.readthedocs.io/
+https://komga.org/docs/guides/edit-metadata/
+https://komga.org/docs/guides/edit-metadata/
+https://www.sqlite.org/fts5.html
+https://www.sqlite.org/fts5.html
+https://www.phash.org/
+https://www.phash.org/
+https://github.com/tesseract-ocr/tesseract
+https://github.com/tesseract-ocr/tesseract
+11
+19
+13
+14
+15
+24
+16
+23
+32
+34
+17
+25
+26
+27
+33
+28
+8
+
+
