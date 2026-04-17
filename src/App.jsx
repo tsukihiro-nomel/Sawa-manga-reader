@@ -283,6 +283,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState([INITIAL_WORKSPACE]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(INITIAL_WORKSPACE.id);
   const [activeScreen, setActiveScreen] = useState('library');
+  const [vaultCategoryFilterId, setVaultCategoryFilterId] = useState(null);
   const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingMetadata, setEditingMetadata] = useState(null);
@@ -448,10 +449,11 @@ export default function App() {
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? INITIAL_TAB;
   const activeView = getTabView(activeTab);
-  const activeScrollKey = useMemo(() => makeViewScrollKey(activeTab?.id || 'tab', activeView, activeScreen, selectedCategoryId), [activeTab?.id, activeView, activeScreen, selectedCategoryId]);
+  const activeScrollCategoryId = activeScreen === 'vault' ? vaultCategoryFilterId : selectedCategoryId;
+  const activeScrollKey = useMemo(() => makeViewScrollKey(activeTab?.id || 'tab', activeView, activeScreen, activeScrollCategoryId), [activeTab?.id, activeView, activeScreen, activeScrollCategoryId]);
   const activeInitialScrollTop = scrollPositionsRef.current[activeScrollKey] ?? 0;
   const captureCurrentViewScroll = useCallback(() => {
-    const currentScrollable = document.querySelector('.library-view, .detail-view, .preview-view, .dashboard-view, .collections-view');
+    const currentScrollable = document.querySelector('.library-view, .detail-view, .preview-view, .dashboard-view, .collections-view, .vault-view');
     if (currentScrollable) {
       scrollPositionsRef.current[activeScrollKey] = currentScrollable.scrollTop || 0;
     }
@@ -541,7 +543,6 @@ export default function App() {
     systemProtectionAvailable: false,
     stealthMode: false
   };
-  const [vaultCategoryFilterId, setVaultCategoryFilterId] = useState(null);
   const vaultCategories = useMemo(
     () => (Array.isArray(vaultLibrary.categories) ? vaultLibrary.categories : []),
     [vaultLibrary.categories]
@@ -2469,6 +2470,7 @@ export default function App() {
               onSelectCategory={setVaultCategoryFilterId}
               onToggleSelect={toggleSelectedManga}
               onOpenManga={openMangaInCurrentTab}
+              onOpenMangaInBackgroundTab={(mangaId) => openMangaInNewTab(mangaId, { activate: false })}
               onToggleFavorite={handleToggleFavorite}
               onContextMenu={openContextMenu}
               onSetupPin={handleSetVaultPin}
@@ -2476,6 +2478,9 @@ export default function App() {
               onLock={handleLockVault}
               onToggleBlur={handleToggleVaultBlur}
               onToggleStealth={handleToggleVaultStealth}
+              initialScrollTop={activeInitialScrollTop}
+              scrollKey={activeScrollKey}
+              onScrollPositionChange={handleViewScrollPositionChange}
             />
           )}
 
