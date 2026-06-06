@@ -12,6 +12,7 @@ function TagManagerModal({ manga, allTags, onToggleTag, onCreateTag, onDeleteTag
   const [newTagColor, setNewTagColor] = useState(DEFAULT_COLORS[0]);
   const [showCreate, setShowCreate] = useState(false);
   const [tagSearch, setTagSearch] = useState('');
+  const [pendingTagIds, setPendingTagIds] = useState({});
 
   const assignedTagIds = new Set((manga?.tags || []).map(t => t.id));
   const tagList = useMemo(() => Object.values(allTags || {}), [allTags]);
@@ -28,6 +29,21 @@ function TagManagerModal({ manga, allTags, onToggleTag, onCreateTag, onDeleteTag
     setNewTagName('');
     setNewTagColor(DEFAULT_COLORS[Math.floor(Math.random() * DEFAULT_COLORS.length)]);
     setShowCreate(false);
+  };
+
+  const withPendingTag = (tagId, action) => {
+    if (!tagId || pendingTagIds[tagId]) return;
+    setPendingTagIds((current) => ({ ...current, [tagId]: true }));
+    Promise.resolve()
+      .then(action)
+      .catch(() => {})
+      .finally(() => {
+        setPendingTagIds((current) => {
+          const next = { ...current };
+          delete next[tagId];
+          return next;
+        });
+      });
   };
 
   return (
@@ -68,23 +84,32 @@ function TagManagerModal({ manga, allTags, onToggleTag, onCreateTag, onDeleteTag
             <div className="tag-modal-grid">
               {filteredTags.length > 0 ? filteredTags.map(tag => {
                 const isSelected = assignedTagIds.has(tag.id);
+                const isPending = Boolean(pendingTagIds[tag.id]);
                 return (
-                  <button
+                  <div
                     key={tag.id}
-                    className={`tag-chip ${isSelected ? 'tag-chip-active' : ''}`}
+                    className={`tag-chip ${isSelected ? 'tag-chip-active' : ''} ${isPending ? 'tag-chip-pending' : ''}`}
                     style={{ '--tc': tag.color }}
-                    onClick={() => onToggleTag(manga.id, tag.id)}
                   >
-                    {isSelected && <CheckIcon size={12} />}
-                    <span>{tag.name}</span>
                     <button
+                      type="button"
+                      className="tag-chip-main"
+                      onClick={() => withPendingTag(tag.id, () => onToggleTag(manga.id, tag.id))}
+                      disabled={isPending}
+                    >
+                      {isSelected && <CheckIcon size={12} />}
+                      <span>{tag.name}</span>
+                    </button>
+                    <button
+                      type="button"
                       className="tag-chip-delete"
-                      onClick={(e) => { e.stopPropagation(); onDeleteTag(tag.id); }}
+                      onClick={() => withPendingTag(tag.id, () => onDeleteTag(tag.id))}
+                      disabled={isPending}
                       title="Supprimer"
                     >
                       <TrashIcon size={11} />
                     </button>
-                  </button>
+                  </div>
                 );
               }) : (
                 <p className="muted-text modal-empty-state">Aucun tag ne correspond à la recherche.</p>

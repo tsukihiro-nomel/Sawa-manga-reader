@@ -1,0 +1,41 @@
+{
+  "appId": "com.sawahiro.mangalibrary.installer",
+  "productName": "Sawa Installer",
+  "executableName": "installer-ui",
+  "copyright": "© 2025 Sawahiro",
+  "directories": {
+    "output": "C:\\Users\\evcam\\Documents\\sawa-manga-library-electron\\Sawa-manga-reader\\release-installer",
+    "app": "C:\\Users\\evcam\\Documents\\sawa-manga-library-electron\\Sawa-manga-reader\\installer"
+  },
+  "files": [
+    "main/**/*",
+    "dist-ui/**/*",
+    "ui/fonts/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "installer/build-resources/backend",
+      "to": "backend"
+    },
+    {
+      "from": "build/LICENSE.txt",
+      "to": "LICENSE.txt"
+    },
+    {
+      "from": "README.md",
+      "to": "README.md"
+    },
+    {
+      "from": "electron/services",
+      "to": "services"
+    }
+  ],
+  "win": {
+    "target": "dir",
+    "icon": "C:\\Users\\evcam\\Documents\\sawa-manga-library-electron\\Sawa-manga-reader\\build\\icon.ico",
+    "requestedExecutionLevel": "asInvoker",
+    "artifactName": "installer-ui-${version}.${ext}"
+  },
+  "asar": true
+}

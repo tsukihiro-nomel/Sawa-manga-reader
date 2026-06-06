@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import MediaAsset from './MediaAsset.jsx';
 import {
   AlertIcon,
@@ -8,6 +8,7 @@ import {
   RefreshIcon,
   SearchIcon,
   SparklesIcon,
+  TrashIcon,
   TrendingUpIcon,
   ArchiveIcon
 } from './Icons.jsx';
@@ -95,6 +96,25 @@ function DuplicateRow({ group, onOpenManga }) {
   );
 }
 
+function VisualCandidateRow({ candidate, onOpenManga }) {
+  return (
+    <div className="maintenance-duplicate-row">
+      <div>
+        <strong>{candidate.left.title} / {candidate.right.title}</strong>
+        <span>Score {candidate.score} · {candidate.reasons.join(' · ')}</span>
+      </div>
+      <div className="maintenance-duplicate-actions">
+        <button type="button" className="ghost-button" onClick={() => onOpenManga(candidate.left.id)}>
+          Ouvrir 1
+        </button>
+        <button type="button" className="ghost-button" onClick={() => onOpenManga(candidate.right.id)}>
+          Ouvrir 2
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function IssueSection({ title, description, icon, count, children, action }) {
   return (
     <section className="maintenance-section-card">
@@ -114,10 +134,31 @@ function IssueSection({ title, description, icon, count, children, action }) {
 function MaintenanceView({
   issues,
   stats,
+  syncStatus,
+  ocrStatus,
+  migrationStatus,
+  migrationBusy = false,
+  migrationFeedback = '',
+  duplicateCandidates,
+  showOcrSection = false,
+  showVisualDedupeSection = false,
   workbenchCount,
   vaultCount,
+  initialScrollTop = 0,
+  scrollKey,
   onOpenManga,
+  onScrollPositionChange,
   onForceRescan,
+  onRunDeepScan,
+  onRebuildDerivedData,
+  onAnalyzeMigration,
+  onRunMigration,
+  onCleanupLegacyStorage,
+  onRefreshDuplicateCandidates,
+  onEnqueueOcr,
+  onPauseOcr,
+  onResumeOcr,
+  onPurgeOcr,
   onQueueIssue,
   onPickCover,
   onOpenWorkbench,
@@ -127,10 +168,45 @@ function MaintenanceView({
   const missingMetadata = issues?.missingMetadata || [];
   const sparseChapters = issues?.sparseChapters || [];
   const duplicateGroups = issues?.duplicateGroups || [];
+  const visualCandidates = duplicateCandidates || [];
+  const migrationCounts = migrationStatus?.pendingReport?.counts || {};
+  const migrationDone = migrationStatus?.latestMigration?.status === 'completed';
   const totalIssues = missingCover.length + missingMetadata.length + sparseChapters.length + duplicateGroups.length;
+  const containerRef = useRef(null);
+  const savingBlockedRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return undefined;
+    savingBlockedRef.current = true;
+    const apply = () => {
+      element.scrollTop = initialScrollTop || 0;
+    };
+    const raf = window.requestAnimationFrame(apply);
+    const releaseTimer = window.setTimeout(() => {
+      apply();
+      savingBlockedRef.current = false;
+    }, 120);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(releaseTimer);
+      savingBlockedRef.current = false;
+    };
+  }, [scrollKey, initialScrollTop]);
+
+  const handleScroll = useCallback(() => {
+    if (savingBlockedRef.current) return;
+    const element = containerRef.current;
+    if (element) onScrollPositionChange?.(element.scrollTop);
+  }, [onScrollPositionChange]);
+
+  useEffect(() => () => {
+    const element = containerRef.current;
+    if (element) onScrollPositionChange?.(element.scrollTop);
+  }, [onScrollPositionChange]);
 
   return (
-    <section className="maintenance-view">
+    <section className="maintenance-view" ref={containerRef} onScroll={handleScroll}>
       <div className="maintenance-hero">
         <div className="maintenance-hero-copy">
           <span className="maintenance-kicker">Centre d'entretien</span>
@@ -148,6 +224,9 @@ function MaintenanceView({
           <button type="button" className="ghost-button" onClick={onForceRescan}>
             <RefreshIcon size={16} /> Relancer un scan propre
           </button>
+          <button type="button" className="ghost-button" onClick={onRunDeepScan}>
+            <RefreshIcon size={16} /> Scan profond
+          </button>
         </div>
       </div>
 
@@ -157,8 +236,105 @@ function MaintenanceView({
         <SummaryTile icon={<DatabaseIcon size={18} />} label="Sans metadata" value={missingMetadata.length} hint="auteur, synopsis, source" />
         <SummaryTile icon={<SparklesIcon size={18} />} label="Queue atelier" value={workbenchCount || 0} hint="lots en attente" />
         <SummaryTile icon={<ArchiveIcon size={18} />} label="Coffre" value={vaultCount || 0} hint="titres proteges" />
+        <SummaryTile icon={<RefreshIcon size={18} />} label="Sync derivee" value={syncStatus?.label || 'a jour'} hint={syncStatus?.detail || 'aucun job en attente'} />
+        {showOcrSection ? (
+          <SummaryTile
+            icon={<SearchIcon size={18} />}
+            label="OCR local"
+            value={ocrStatus?.available ? 'pret' : 'indispo'}
+            hint={ocrStatus?.available ? `${ocrStatus?.indexedPages || 0} pages indexees` : 'moteur local manquant'}
+          />
+        ) : null}
         <SummaryTile icon={<TrendingUpIcon size={18} />} label="Memoire app" value={formatBytes(stats?.memoryUsage?.heapUsed)} hint={stats?.lastScanTime ? 'scan recent memorise' : 'pas de scan memorise'} />
       </div>
+
+      <IssueSection
+        title="Etat de synchro"
+        description="Le socle derive v4 reste sobre: un statut compact, un scan profond si besoin, puis on retourne a la lecture."
+        icon={<RefreshIcon size={16} />}
+        count={(syncStatus?.queuedCount || 0) + (syncStatus?.runningCount || 0)}
+        action={(
+          <button type="button" className="ghost-button" onClick={onRebuildDerivedData}>
+            <DatabaseIcon size={14} /> Reconstruire les donnees derivees
+          </button>
+        )}
+      >
+        <p className="maintenance-empty">
+          {syncStatus?.label ? `${syncStatus.label}${syncStatus.detail ? ` · ${syncStatus.detail}` : ''}` : 'Le scheduler reste silencieux tant qu aucune action supplementaire n est necessaire.'}
+        </p>
+      </IssueSection>
+
+      <IssueSection
+        title="Migration Core v2 SQLite"
+        description="La base principale v2 se construit avec backup automatique. Les JSON existants restent conserves pour rollback."
+        icon={<DatabaseIcon size={16} />}
+        count={migrationDone ? 'v2' : 'JSON'}
+        action={(
+          <div className="maintenance-inline-actions">
+            <button type="button" className="ghost-button" disabled={migrationBusy || !onAnalyzeMigration} onClick={onAnalyzeMigration}>
+              <SearchIcon size={14} /> Analyser
+            </button>
+            <button type="button" className="primary-button" disabled={migrationBusy || !onRunMigration} onClick={onRunMigration}>
+              <DatabaseIcon size={14} /> Migrer
+            </button>
+          </div>
+        )}
+      >
+        <div className="maintenance-migration-summary">
+          <div>
+            <strong>{migrationDone ? 'Core v2 actif' : 'Migration disponible'}</strong>
+            <span>
+              {migrationDone
+                ? `Derniere migration: ${migrationStatus?.latestMigration?.completedAt || migrationStatus?.latestMigration?.createdAt || 'date inconnue'}`
+                : 'Analyse d abord tes donnees, puis lance la migration quand tout est pret.'}
+            </span>
+          </div>
+          <div className="maintenance-migration-counts">
+            <span>{migrationCounts.series || 0} series</span>
+            <span>{migrationCounts.chapters || 0} chapitres</span>
+            <span>{migrationCounts.tags || 0} tags</span>
+            <span>{migrationCounts.collections || 0} collections</span>
+            <span>{migrationCounts.progress || 0} progressions</span>
+          </div>
+        </div>
+        {migrationStatus?.latestMigration?.backupPath ? (
+          <p className="maintenance-empty">Backup pre-migration: {migrationStatus.latestMigration.backupPath}</p>
+        ) : null}
+        {migrationFeedback ? <p className="maintenance-empty">{migrationFeedback}</p> : null}
+        <div className="maintenance-inline-actions">
+          <button type="button" className="ghost-button" disabled={migrationBusy || !onCleanupLegacyStorage} onClick={onCleanupLegacyStorage}>
+            <TrashIcon size={14} /> Nettoyage legacy securise
+          </button>
+        </div>
+      </IssueSection>
+
+      {showOcrSection ? (
+        <IssueSection
+          title="OCR local"
+          description="Reste dans l'entretien: indexe le texte quand tu le demandes, puis le moteur de recherche en profite en silence."
+          icon={<SearchIcon size={16} />}
+          count={ocrStatus?.indexedPages || 0}
+          action={(
+            <div className="maintenance-inline-actions">
+              <button type="button" className="ghost-button" onClick={ocrStatus?.paused ? onResumeOcr : onPauseOcr}>
+                <RefreshIcon size={14} /> {ocrStatus?.paused ? 'Reprendre' : 'Pause'}
+              </button>
+              <button type="button" className="ghost-button" onClick={onPurgeOcr}>
+                <TrashIcon size={14} /> Purger
+              </button>
+              <button type="button" className="primary-button" onClick={onEnqueueOcr}>
+                <SearchIcon size={14} /> Lancer OCR
+              </button>
+            </div>
+          )}
+        >
+          <p className="maintenance-empty">
+            {ocrStatus?.available
+              ? `${ocrStatus?.engineLabel || 'Moteur local'} pret${ocrStatus?.languages?.length ? ` · langues: ${ocrStatus.languages.slice(0, 4).map((entry) => entry.code).join(', ')}` : ''}`
+              : 'OCR local indisponible. Installe Tesseract ou utilise l OCR Windows pris en charge par Sawa pour activer cette tranche.'}
+          </p>
+        </IssueSection>
+      ) : null}
 
       <div className="maintenance-grid">
         <IssueSection
@@ -177,7 +353,7 @@ function MaintenanceView({
             <IssueRow
               key={manga.id}
               manga={manga}
-              subtitle={`${manga.chapterCount} ch. � couverture locale absente`}
+              subtitle={`${manga.chapterCount} ch. · couverture locale absente`}
               actionLabel="Ouvrir"
               onAction={() => onOpenManga(manga.id)}
               secondaryActionLabel="Choisir cover"
@@ -245,6 +421,25 @@ function MaintenanceView({
             <DuplicateRow key={group.key} group={group} onOpenManga={onOpenManga} />
           ))}
         </IssueSection>
+
+        {showVisualDedupeSection ? (
+          <IssueSection
+            title="Candidats visuels"
+            description="Empreintes d'image locales, uniquement pour suggerer des rapprochements a verifier dans le calme."
+            icon={<SparklesIcon size={16} />}
+            count={visualCandidates.length}
+            action={(
+              <button type="button" className="ghost-button" onClick={onRefreshDuplicateCandidates}>
+                <RefreshIcon size={14} /> Actualiser
+              </button>
+            )}
+          >
+            {visualCandidates.length === 0 ? <p className="maintenance-empty">Aucun candidat visuel pour l'instant.</p> : null}
+            {visualCandidates.slice(0, 10).map((candidate) => (
+              <VisualCandidateRow key={candidate.id} candidate={candidate} onOpenManga={onOpenManga} />
+            ))}
+          </IssueSection>
+        ) : null}
       </div>
     </section>
   );

@@ -1,0 +1,11 @@
+{
+  "name": "sawa-installer",
+  "version": "4.0.0",
+  "main": "main/main.cjs",
+  "productName": "Sawa Installer",
+  "description": "Sawa Manga Library — Setup",
+  "author": "Sawahiro",
+  "devDependencies": {
+    "electron": "^30.0.0"
+  }
+}

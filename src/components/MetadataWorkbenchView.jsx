@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import MediaAsset from './MediaAsset.jsx';
 import {
   ChevronLeftIcon,
@@ -59,7 +59,7 @@ function QueueItem({ manga, active, onClick, onRemove }) {
       </span>
       <span className="workbench-queue-item-copy">
         <strong>{manga.displayTitle}</strong>
-        <small>{manga.author || 'Sans auteur'} · {manga.chapterCount} ch.</small>
+        <small>{manga.author || 'Sans auteur'} Â· {manga.chapterCount} ch.</small>
       </span>
       <span
         role="button"
@@ -85,10 +85,13 @@ function QueueItem({ manga, active, onClick, onRemove }) {
 
 function MetadataWorkbenchView({
   queueMangas,
+  initialScrollTop = 0,
+  scrollKey,
   onReplaceQueue,
   onImportMatch,
   onPickCover,
-  onOpenManga
+  onOpenManga,
+  onScrollPositionChange
 }) {
   const [activeMangaId, setActiveMangaId] = useState(queueMangas[0]?.id || null);
   const [query, setQuery] = useState('');
@@ -96,6 +99,8 @@ function MetadataWorkbenchView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [importingId, setImportingId] = useState(null);
+  const containerRef = useRef(null);
+  const savingBlockedRef = useRef(false);
 
   useEffect(() => {
     if (!queueMangas.length) {
@@ -117,6 +122,36 @@ function MetadataWorkbenchView({
     setResults([]);
     setError('');
   }, [activeManga?.id]);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return undefined;
+    savingBlockedRef.current = true;
+    const apply = () => {
+      element.scrollTop = initialScrollTop || 0;
+    };
+    const raf = window.requestAnimationFrame(apply);
+    const releaseTimer = window.setTimeout(() => {
+      apply();
+      savingBlockedRef.current = false;
+    }, 120);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(releaseTimer);
+      savingBlockedRef.current = false;
+    };
+  }, [scrollKey, initialScrollTop]);
+
+  const handleScroll = useCallback(() => {
+    if (savingBlockedRef.current) return;
+    const element = containerRef.current;
+    if (element) onScrollPositionChange?.(element.scrollTop);
+  }, [onScrollPositionChange]);
+
+  useEffect(() => () => {
+    const element = containerRef.current;
+    if (element) onScrollPositionChange?.(element.scrollTop);
+  }, [onScrollPositionChange]);
 
   const runSearch = async (forcedQuery = null) => {
     const nextQuery = String(forcedQuery ?? query).trim();
@@ -159,7 +194,7 @@ function MetadataWorkbenchView({
 
   if (!queueMangas.length) {
     return (
-      <section className="workbench-view">
+      <section className="workbench-view" ref={containerRef} onScroll={handleScroll}>
         <div className="workbench-empty-card">
           <span className="workbench-empty-kicker">Atelier metadata</span>
           <h1>Aucun manga dans la file.</h1>
@@ -173,7 +208,7 @@ function MetadataWorkbenchView({
   }
 
   return (
-    <section className="workbench-view">
+    <section className="workbench-view" ref={containerRef} onScroll={handleScroll}>
       <div className="workbench-layout">
         <aside className="workbench-sidebar">
           <div className="workbench-sidebar-head">
@@ -200,7 +235,7 @@ function MetadataWorkbenchView({
               <span className="workbench-empty-kicker">Selection courante</span>
               <h1>{activeManga.displayTitle}</h1>
               <p>
-                {activeManga.author || 'Auteur inconnu'} · {activeManga.chapterCount} chapitres ·
+                {activeManga.author || 'Auteur inconnu'} Â· {activeManga.chapterCount} chapitres Â·
                 {activeManga.coverSrc ? ' cover presente' : ' cover manquante'}
               </p>
             </div>

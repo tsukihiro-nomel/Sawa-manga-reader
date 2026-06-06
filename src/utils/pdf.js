@@ -1,13 +1,57 @@
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
+// pdfjs-dist is loaded on demand so its ~2 MB bundle stays out of the initial chunk and only
+// downloads the first time the user opens a PDF.
+let pdfjsModulePromise = null;
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+async function getPdfjs() {
+  if (!pdfjsModulePromise) {
+    pdfjsModulePromise = (async () => {
+      const [lib, workerUrlModule] = await Promise.all([
+        import('pdfjs-dist/legacy/build/pdf.mjs'),
+        import('pdfjs-dist/legacy/build/pdf.worker.mjs?url')
+      ]);
+      lib.GlobalWorkerOptions.workerSrc = workerUrlModule.default;
+      return lib;
+    })().catch((error) => {
+      pdfjsModulePromise = null;
+      throw error;
+    });
+  }
+  return pdfjsModulePromise;
+}
 
 const pdfDocumentCache = new Map();
 const pdfDataCache = new Map();
 
 function getDocumentCacheKey(filePath) {
   return String(filePath || '');
+}
+
+export function buildPdfDocumentSource(filePath) {
+  const normalizedPath = String(filePath || '');
+  if (!normalizedPath) throw new Error('Missing PDF path');
+  return {
+    url: `manga://local/${encodeURIComponent(normalizedPath)}`,
+    isEvalSupported: false,
+    useWorkerFetch: false,
+    disableRange: false,
+    disableStream: false,
+    disableAutoFetch: false,
+    stopAtErrors: false,
+    verbosity: 0
+  };
+}
+
+function buildPdfDataDocumentSource(data) {
+  return {
+    data,
+    isEvalSupported: false,
+    useWorkerFetch: false,
+    disableRange: true,
+    disableStream: true,
+    disableAutoFetch: true,
+    stopAtErrors: false,
+    verbosity: 0
+  };
 }
 
 function normalizePdfBinary(payload) {
@@ -73,23 +117,21 @@ async function loadPdfDocument(filePath) {
 
   if (!pdfDocumentCache.has(key)) {
     const documentPromise = (async () => {
-      const data = await readPdfBinary(filePath);
-      const loadingTask = pdfjsLib.getDocument({
-        data,
-        isEvalSupported: false,
-        useWorkerFetch: false,
-        disableRange: true,
-        disableStream: true,
-        disableAutoFetch: true,
-        stopAtErrors: false,
-        verbosity: 0
-      });
+      const pdfjsLib = await getPdfjs();
+      const loadingTask = pdfjsLib.getDocument(buildPdfDocumentSource(filePath));
 
       try {
         return await loadingTask.promise;
       } catch (error) {
         await loadingTask.destroy().catch(() => {});
-        throw error;
+        const data = await readPdfBinary(filePath);
+        const fallbackTask = pdfjsLib.getDocument(buildPdfDataDocumentSource(data));
+        try {
+          return await fallbackTask.promise;
+        } catch (fallbackError) {
+          await fallbackTask.destroy().catch(() => {});
+          throw fallbackError || error;
+        }
       }
     })().catch((error) => {
       pdfDocumentCache.delete(key);

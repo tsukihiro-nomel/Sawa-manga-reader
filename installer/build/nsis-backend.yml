@@ -1,0 +1,48 @@
+# electron-builder config for the silent NSIS *backend*. This is NOT the
+# user-facing installer — it's a headless executable that the Electron UI
+# spawns at install click. Renders no UI; just executes the file/registry/
+# shortcut operations and writes progress lines to /LOG=<file>.
+#
+# All paths in this file are resolved relative to the project root
+# (electron-builder behaviour, even when the config is in a subdirectory).
+
+appId: com.sawahiro.mangalibrary
+productName: Sawa Manga Library
+copyright: © 2025 Sawahiro
+
+directories:
+  buildResources: build
+  output: release-backend
+
+files:
+  - "dist/**/*"
+  - "electron/**/*"
+  - "package.json"
+  - "!**/*.{md,map,ts,tsx}"
+
+extraResources:
+  - from: ".codex-cache/suwayomi/Suwayomi-Server.jar"
+    to: "vendor/suwayomi/Suwayomi-Server.jar"
+  - from: "build/LICENSE.txt"
+    to: "LICENSE.txt"
+
+win:
+  target:
+    - target: nsis
+      arch: ["x64"]
+  artifactName: installer-backend.exe
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  selectPerMachineByDefault: false
+  allowToChangeInstallationDirectory: true
+  differentialPackage: false
+  createDesktopShortcut: false
+  createStartMenuShortcut: false
+  runAfterFinish: false
+  unicode: true
+  include: installer/build/installer-backend.nsh
+  warningsAsErrors: false

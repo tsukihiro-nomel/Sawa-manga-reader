@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import MangaCard from './MangaCard.jsx';
 import { ArchiveIcon, EyeIcon, EyeOffIcon, LockIcon, SettingsIcon } from './Icons.jsx';
 
@@ -97,12 +97,16 @@ function VaultView({
   mangas,
   categories = [],
   activeCategoryId = null,
+  initialScrollTop = 0,
+  scrollKey,
   selectionMode,
   selectedIds,
+  onScrollPositionChange,
   onToggleSelectionMode,
   onSelectCategory,
   onToggleSelect,
   onOpenManga,
+  onOpenMangaInBackgroundTab,
   onToggleFavorite,
   onContextMenu,
   onSetupPin,
@@ -115,10 +119,42 @@ function VaultView({
     () => categories.find((category) => category.id === activeCategoryId) || null,
     [activeCategoryId, categories]
   );
+  const containerRef = useRef(null);
+  const savingBlockedRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return undefined;
+    savingBlockedRef.current = true;
+    const apply = () => {
+      element.scrollTop = initialScrollTop || 0;
+    };
+    const raf = window.requestAnimationFrame(apply);
+    const releaseTimer = window.setTimeout(() => {
+      apply();
+      savingBlockedRef.current = false;
+    }, 120);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(releaseTimer);
+      savingBlockedRef.current = false;
+    };
+  }, [scrollKey, initialScrollTop]);
+
+  const handleScroll = useCallback(() => {
+    if (savingBlockedRef.current) return;
+    const element = containerRef.current;
+    if (element) onScrollPositionChange?.(element.scrollTop);
+  }, [onScrollPositionChange]);
+
+  useEffect(() => () => {
+    const element = containerRef.current;
+    if (element) onScrollPositionChange?.(element.scrollTop);
+  }, [onScrollPositionChange]);
 
   if (!vault?.configured) {
     return (
-      <section className="vault-view">
+      <section className="vault-view" ref={containerRef} onScroll={handleScroll}>
         <VaultSetupCard
           configured={false}
           vault={vault}
@@ -133,7 +169,7 @@ function VaultView({
 
   if (vault.locked) {
     return (
-      <section className="vault-view">
+      <section className="vault-view" ref={containerRef} onScroll={handleScroll}>
         <VaultSetupCard
           configured
           vault={vault}
@@ -154,7 +190,7 @@ function VaultView({
     : `${totalProtected} titre${totalProtected > 1 ? 's' : ''} proteges`;
 
   return (
-    <section className="vault-view">
+    <section className="vault-view" ref={containerRef} onScroll={handleScroll}>
       <div className="vault-hero">
         <div>
           <span className="vault-kicker">Coffre prive</span>
@@ -234,6 +270,7 @@ function VaultView({
               key={manga.id}
               manga={manga}
               onOpen={onOpenManga}
+              onOpenBackground={onOpenMangaInBackgroundTab}
               onToggleFavorite={onToggleFavorite}
               onContextMenu={onContextMenu}
               selected={selectedIds.has(manga.id)}

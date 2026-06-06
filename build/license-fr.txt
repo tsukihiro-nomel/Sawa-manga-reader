@@ -1,0 +1,21 @@
+Sawa Manga Library - Conditions d'utilisation
+
+Sawa Manga Library est une application locale de lecture et de gestion de mangas.
+
+1. Donnees locales
+Sawa conserve les donnees utilisateur sur cette machine. Les fichiers JSON utilisateur restent la source de verite pour les preferences, la progression, les liens Sources web et les metadonnees manuelles.
+
+2. Donnees derivees
+Les caches, bases SQLite derivees, index OCR, index de recherche et donnees temporaires peuvent etre reconstruits depuis les fichiers locaux et les donnees utilisateur.
+
+3. Sources web
+Le moteur Sources web peut executer un runtime local compatible avec des extensions communautaires. Les depots tiers doivent etre ajoutes volontairement par l'utilisateur. Sawa ne garantit pas la disponibilite, la legalite ou la securite des sources externes ajoutees par l'utilisateur.
+
+4. Contenus
+L'utilisateur est responsable des fichiers, sources, telechargements et bibliotheques qu'il ajoute ou importe dans Sawa.
+
+5. Garantie
+Le logiciel est fourni tel quel, sans garantie de fonctionnement continu, d'absence d'erreur ou d'adaptation a un usage particulier.
+
+6. Desinstallation
+La desinstallation retire l'application. Les donnees utilisateur et bibliotheques peuvent etre conservees par defaut afin d'eviter toute perte involontaire.

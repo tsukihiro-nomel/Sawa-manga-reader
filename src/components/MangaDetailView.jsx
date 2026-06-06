@@ -217,6 +217,7 @@ function MangaDetailView({
   onOpenChapterInNewTab,
   onOpenChapterInBackgroundTab,
   onResumeReading,
+  onOpenSourceSeries,
   onToggleFavorite,
   onPickCover,
   onOpenMetadataEditor,
@@ -350,6 +351,11 @@ function MangaDetailView({
                 <ScrollIcon size={16} /> Ch. 1
               </button>
             )}
+            {manga.sourceWeb?.linked ? (
+              <button className="ghost-button" onClick={() => onOpenSourceSeries?.(manga)}>
+                <LayersIcon size={14} /> Voir les chapitres web
+              </button>
+            ) : null}
             <button className="ghost-button" onClick={onOpenMetadataEditor}>
               <EditIcon size={14} /> Éditer
             </button>
@@ -360,6 +366,24 @@ function MangaDetailView({
               <SparklesIcon size={14} /> Couverture
             </button>
           </div>
+
+          {manga.sourceWeb?.linked ? (
+            <div className="detail-source-web-banner">
+              <span className="detail-source-web-pill">Source web</span>
+              <div className="detail-source-web-copy">
+                <span>{manga.sourceWeb.sourceLabel || 'Serie liee'}</span>
+                <small>
+                  {manga.sourceWeb.statusLabel || 'Suivi web actif'}
+                  {Array.isArray(manga.sourceWeb.importedChapterIds) && manga.sourceWeb.importedChapterIds.length > 0
+                    ? ` · ${manga.sourceWeb.importedChapterIds.length} chapitre${manga.sourceWeb.importedChapterIds.length > 1 ? 's' : ''} deja importe${manga.sourceWeb.importedChapterIds.length > 1 ? 's' : ''}`
+                    : ''}
+                </small>
+              </div>
+              <button className="ghost-button detail-source-web-action" onClick={() => onOpenSourceSeries?.(manga)}>
+                <LayersIcon size={14} /> Voir les chapitres web
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -422,6 +446,32 @@ function MangaDetailView({
             )}
           </div>
         </div>
+
+        {manga.sourceWeb?.linked ? (
+          <div className="detail-panels-row detail-panels-row-single">
+            <div className="detail-panel detail-source-web-panel">
+              <div className="detail-source-web-panel-copy">
+                <span className="detail-info-label">Suivi Source web</span>
+                <strong>{manga.sourceWeb.sourceLabel || 'Serie reliee'}</strong>
+                <small>{manga.sourceWeb.statusLabel || 'Disponible depuis les menus et panneaux du manga.'}</small>
+              </div>
+              <div className="detail-source-web-panel-meta">
+                <span className="badge-pill badge-pill-collection">
+                  {Array.isArray(manga.sourceWeb.importedChapterIds) ? manga.sourceWeb.importedChapterIds.length : 0} importe(s)
+                </span>
+                {manga.sourceWeb.newChapterCount > 0 ? (
+                  <span className="badge-pill">{manga.sourceWeb.newChapterCount} nouveau(x)</span>
+                ) : null}
+              </div>
+              <div className="detail-source-web-panel-actions">
+                <button className="ghost-button detail-source-web-action" onClick={() => onOpenSourceSeries?.(manga)}>
+                  <LayersIcon size={14} /> Voir les chapitres web
+                </button>
+                <span className="muted-text">Disponible aussi depuis le clic droit sur le manga et ses chapitres.</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Row 2: Tags + Collections side by side */}
         <div className="detail-panels-row">

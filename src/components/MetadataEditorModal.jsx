@@ -23,7 +23,8 @@ export default function MetadataEditorModal({
   onClose,
   onSave,
   onUpdateLocks,
-  onImportComicInfo
+  onImportComicInfo,
+  onExportComicInfo
 }) {
   const [form, setForm] = useState({
     title: '',
@@ -77,6 +78,24 @@ export default function MetadataEditorModal({
     await onUpdateLocks(manga.id, { [field]: value });
   }
 
+  async function handleExport() {
+    if (!onExportComicInfo) return;
+    setBusy(true);
+    setStatus('');
+    try {
+      const result = await onExportComicInfo(manga.id);
+      if (result?.ok === false) {
+        setStatus(result.error || 'Impossible d exporter ComicInfo.');
+      } else {
+        setStatus(result?.path ? `ComicInfo exporte vers ${result.path}` : 'ComicInfo exporte.');
+      }
+    } catch (error) {
+      setStatus(error?.message || 'Impossible d exporter ComicInfo.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function handleSave() {
     const aliases = [...new Map(
       form.aliasesText
@@ -108,6 +127,9 @@ export default function MetadataEditorModal({
             <p>Tu peux verrouiller un champ pour empecher tout ecrasement automatique.</p>
           </div>
           <div className="metadata-editor-head-actions">
+            <button type="button" className="ghost-button" onClick={handleExport} disabled={busy}>
+              <SparklesIcon size={14} /> Exporter ComicInfo
+            </button>
             <button type="button" className="ghost-button" onClick={handleImport} disabled={busy}>
               <SparklesIcon size={14} /> {busy ? 'Import...' : 'Importer ComicInfo'}
             </button>

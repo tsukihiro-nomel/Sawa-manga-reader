@@ -1,0 +1,26 @@
+{
+  "id": "sources-web",
+  "name": "Sources web",
+  "description": "Addon officiel integre pour rechercher puis importer des chapitres web dans Sawa.",
+  "version": "2.0.0",
+  "kind": "source-addon",
+  "defaultEnabled": false,
+  "bundled": true,
+  "integrated": true,
+  "runtimeKind": "compatibility-layer",
+  "runtimeVersion": "embedded-v1",
+  "runtimeBundled": true,
+  "managementSurface": "settings:sources-web",
+  "permissions": [
+    "network-read",
+    "library-import",
+    "json-user-data",
+    "runtime-cache"
+  ],
+  "capabilities": [
+    "sources",
+    "ui-entry:add-menu",
+    "sources:repositories",
+    "sources:extensions"
+  ]
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import TitleBar from './components/TitleBar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import TopBar from './components/TopBar.jsx';
@@ -6,18 +6,19 @@ import LibraryView from './components/LibraryView.jsx';
 import MangaDetailView from './components/MangaDetailView.jsx';
 import ChapterPreviewView from './components/ChapterPreviewView.jsx';
 import ReaderView from './components/ReaderView.jsx';
-import SettingsDrawer from './components/SettingsDrawer.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
 import Dashboard from './components/Dashboard.jsx';
-import CollectionsView from './components/CollectionsView.jsx';
 import TagManagerModal from './components/TagManagerModal.jsx';
 import BulkActionBar from './components/BulkActionBar.jsx';
-import MaintenanceView from './components/MaintenanceView.jsx';
-import MetadataWorkbenchView from './components/MetadataWorkbenchView.jsx';
-import VaultView from './components/VaultView.jsx';
 import BatchPickerModal from './components/BatchPickerModal.jsx';
 import MetadataEditorModal from './components/MetadataEditorModal.jsx';
 import ReadingQueueDrawer from './components/ReadingQueueDrawer.jsx';
+import AddEntryMenu from './components/AddEntryMenu.jsx';
+import TextPromptModal from './components/TextPromptModal.jsx';
+import ShellErrorBoundary from './components/ShellErrorBoundary.jsx';
+import { resolveNumberedTabIndex } from './interfaces/kavita/tabInteractions.js';
+import { createReaderSessionStore } from './interfaces/kavita/readerSessionStore.js';
+import { createInterfaceTransitionCoordinator } from './interfaces/interfaceTransition.js';
 import {
   AlertIcon,
   ArchiveIcon,
@@ -50,6 +51,110 @@ import {
   parseSearchQuery,
   sortMangas
 } from './utils/reader.js';
+import { mergePayloadForStability } from './utils/payloadMerge.js';
+
+const SettingsDrawer = lazy(() => import('./components/SettingsDrawer.jsx'));
+const CollectionsView = lazy(() => import('./components/CollectionsView.jsx'));
+const MaintenanceView = lazy(() => import('./components/MaintenanceView.jsx'));
+const MetadataWorkbenchView = lazy(() => import('./components/MetadataWorkbenchView.jsx'));
+const VaultView = lazy(() => import('./components/VaultView.jsx'));
+const CommandPalette = lazy(() => import('./components/CommandPalette.jsx'));
+const SourcesView = lazy(() => import('./components/SourcesView.jsx'));
+const KavitaShell = lazy(() => import('./interfaces/kavita/KavitaShell.jsx'));
+const preloadKavitaShell = () => import('./interfaces/kavita/KavitaShell.jsx');
+
+const DEFAULT_KEYBOARD_SHORTCUTS = {
+  nextPage: 'ArrowRight',
+  prevPage: 'ArrowLeft',
+  nextChapter: 'Ctrl+ArrowRight',
+  prevChapter: 'Ctrl+ArrowLeft',
+  toggleFullscreen: 'F',
+  toggleUI: 'H',
+  zoomIn: '+',
+  zoomOut: '-',
+  zoomReset: '0',
+  exitReader: 'Escape',
+  openCommandPalette: 'Ctrl+K',
+  toggleReadingQueue: 'Ctrl+Shift+Q',
+  newTab: 'Ctrl+T',
+  closeTab: 'Ctrl+W',
+  goBack: 'Alt+ArrowLeft',
+  openSettings: 'Ctrl+,',
+  openSources: 'Ctrl+Shift+S',
+  toggleSidebar: 'Ctrl+B',
+  panicLock: 'Ctrl+Shift+L',
+  nextTab: 'Ctrl+Tab',
+  prevTab: 'Ctrl+Shift+Tab'
+};
+
+function isEditableTarget(target) {
+  const tagName = target?.tagName?.toLowerCase();
+  return target?.isContentEditable || ['input', 'textarea', 'select'].includes(tagName);
+}
+
+function normalizeShortcutToken(token = '') {
+  const value = String(token || '').trim();
+  if (!value) return '';
+  const lower = value.toLowerCase();
+  if (['control', 'ctrl', 'meta', 'cmd', 'command'].includes(lower)) return 'Ctrl';
+  if (['shift'].includes(lower)) return 'Shift';
+  if (['alt', 'option'].includes(lower)) return 'Alt';
+  if (['esc', 'escape'].includes(lower)) return 'Escape';
+  if (['arrowleft', 'left'].includes(lower)) return 'ArrowLeft';
+  if (['arrowright', 'right'].includes(lower)) return 'ArrowRight';
+  if (['arrowup', 'up'].includes(lower)) return 'ArrowUp';
+  if (['arrowdown', 'down'].includes(lower)) return 'ArrowDown';
+  if (lower === 'browserback') return 'BrowserBack';
+  if (lower === 'tab') return 'Tab';
+  if (lower === 'space' || lower === 'spacebar') return 'Space';
+  if (lower === 'comma') return ',';
+  if (lower === 'plus') return '+';
+  if (lower === 'minus') return '-';
+  if (value.length === 1) return value.toUpperCase();
+  return value;
+}
+
+function splitShortcut(shortcut = '') {
+  return String(shortcut || '')
+    .split('+')
+    .map((token) => normalizeShortcutToken(token))
+    .filter(Boolean);
+}
+
+function getEventShortcutTokens(event) {
+  const tokens = [];
+  if (event.ctrlKey || event.metaKey) tokens.push('Ctrl');
+  if (event.shiftKey) tokens.push('Shift');
+  if (event.altKey) tokens.push('Alt');
+
+  let key = event.key || event.code || '';
+  if (key === '=' && event.shiftKey) key = '+';
+  const normalizedKey = normalizeShortcutToken(key);
+  if (normalizedKey && !['Ctrl', 'Shift', 'Alt'].includes(normalizedKey)) {
+    tokens.push(normalizedKey);
+  }
+  return tokens;
+}
+
+function eventMatchesShortcut(event, shortcut = '') {
+  const expected = splitShortcut(shortcut);
+  if (expected.length === 0) return false;
+  const actual = getEventShortcutTokens(event);
+  if (expected.length !== actual.length) return false;
+  return expected.every((token, index) => token === actual[index]);
+}
+
+function formatShortcutLabel(shortcut = '') {
+  return splitShortcut(shortcut).join('+');
+}
+
+function LazyPanelPlaceholder({ label = 'Chargement de l interface...' }) {
+  return (
+    <div className="settings-note lazy-panel-placeholder">
+      {label}
+    </div>
+  );
+}
 
 function sanitizeReaderState(state = null) {
   if (!state || typeof state !== 'object') return null;
@@ -86,6 +191,33 @@ function createTab(initialView, seedStack = [], options = {}) {
     incognito: Boolean(options?.incognito),
     stack: [...seedStack.map(normalizeView), normalizeView(initialView)]
   };
+}
+
+function choosePreferredOcrLanguages(info = {}) {
+  const languageCodes = (Array.isArray(info?.languages) ? info.languages : [])
+    .map((entry) => String(entry?.code || entry?.label || entry || '').trim())
+    .filter(Boolean);
+
+  if (languageCodes.length === 0) {
+    if (info?.engineKind === 'windows-ocr') return ['fr-FR'];
+    return ['eng'];
+  }
+
+  if (info?.engineKind === 'windows-ocr') {
+    const preferred = languageCodes.find((code) => /^fr\b|^fr-/i.test(code))
+      || languageCodes.find((code) => /^en\b|^en-/i.test(code))
+      || languageCodes.find((code) => /^ja\b|^ja-/i.test(code))
+      || languageCodes[0];
+    return preferred ? [preferred] : [languageCodes[0]];
+  }
+
+  const preferred = [
+    languageCodes.find((code) => /^eng$/i.test(code)),
+    languageCodes.find((code) => /^jpn$/i.test(code)),
+    languageCodes.find((code) => /^(fra|fre|fr)$/i.test(code))
+  ].filter(Boolean);
+
+  return preferred.length > 0 ? [...new Set(preferred)] : [languageCodes[0]];
 }
 
 const INITIAL_TAB = createTab(normalizeView());
@@ -202,6 +334,19 @@ function getTabView(tab) {
   return tab?.stack?.[tab.stack.length - 1] ?? normalizeView();
 }
 
+function neutralizeLockedVaultTabs(meta, view, vault, manga) {
+  if (!vault?.locked || !view?.mangaId) return meta;
+  const mangaId = String(view.mangaId);
+  const privateIds = Array.isArray(vault.privateMangaIds) ? vault.privateMangaIds : [];
+  const knownPrivate = privateIds.some((entry) => String(entry) === mangaId);
+  if (!knownPrivate && manga) return meta;
+  return {
+    ...meta,
+    label: 'Contenu prive',
+    subtitle: 'Coffre verrouille'
+  };
+}
+
 function matchesEntityReference(entity, reference) {
   const needle = String(reference || '').trim();
   if (!needle) return false;
@@ -225,17 +370,27 @@ function chapterTargetView(ui, mangaId, chapterId, pageIndex = 0) {
     : { screen: 'reader', mangaId, chapterId, pageIndex };
 }
 
-function makeViewScrollKey(tabId, view, activeScreen = 'library', selectedCategoryId = null) {
+function makeViewScrollKey(tabId, view, activeScreen = 'library', screenContextKey = 'all') {
   const screen = view?.screen || 'library';
   const mangaId = view?.mangaId || 'none';
   const chapterId = view?.chapterId || 'none';
-  return `${tabId}:${screen}:${mangaId}:${chapterId}:${activeScreen}:${selectedCategoryId ?? 'all'}`;
+  return `${tabId}:${screen}:${mangaId}:${chapterId}:${activeScreen}:${screenContextKey || 'all'}`;
 }
 
 function normalizeThemeName(theme) {
   if (theme === 'dark') return 'dark-night';
   if (theme === 'light') return 'light-paper';
   return theme || 'dark-night';
+}
+
+function normalizeInterfaceMode(ui = {}) {
+  return ui.interfaceMode === 'kavita' || ui.interfaceMode === 'kavita-clean' || ui.theme === 'kavita-clean'
+    ? 'kavita'
+    : 'sawa';
+}
+
+function shouldShowKavitaUpgradeBanner(ui = {}) {
+  return normalizeInterfaceMode(ui) !== 'kavita' && !ui.kavitaUpgradePromptSeen;
 }
 
 function cardSizeMinWidth(cardSize) {
@@ -248,6 +403,110 @@ function cardSizeGridGap(cardSize) {
   if (cardSize === 'compact') return '14px';
   if (cardSize === 'large') return '22px';
   return '18px';
+}
+
+function toSortableNumber(value) {
+  const parsed = Number.parseFloat(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function extractOrderFromText(value) {
+  const text = String(value || '');
+  const matches = [...text.matchAll(/(\d+(?:[.,]\d+)?)/g)];
+  if (!matches.length) return null;
+  return toSortableNumber(matches[matches.length - 1][1]);
+}
+
+function buildChapterOrderDescriptor(chapter, index = 0) {
+  const metadataVolume = toSortableNumber(chapter?.volume);
+  const metadataNumber = toSortableNumber(chapter?.number);
+  if (metadataVolume !== null || metadataNumber !== null) {
+    return {
+      tier: 0,
+      volume: metadataVolume ?? 0,
+      number: metadataNumber ?? 0,
+      fallback: String(chapter?.name || '').toLowerCase(),
+      index
+    };
+  }
+
+  const filenameNumber = extractOrderFromText(chapter?.name) ?? extractOrderFromText(chapter?.path);
+  if (filenameNumber !== null) {
+    return {
+      tier: 1,
+      volume: 0,
+      number: filenameNumber,
+      fallback: String(chapter?.name || '').toLowerCase(),
+      index
+    };
+  }
+
+  return {
+    tier: 2,
+    volume: 0,
+    number: index,
+    fallback: String(chapter?.name || '').toLowerCase(),
+    index
+  };
+}
+
+function sortChaptersForNextCandidate(chapters = []) {
+  return [...chapters]
+    .map((chapter, index) => ({ chapter, order: buildChapterOrderDescriptor(chapter, index) }))
+    .sort((left, right) => (
+      left.order.tier - right.order.tier
+      || left.order.volume - right.order.volume
+      || left.order.number - right.order.number
+      || left.order.fallback.localeCompare(right.order.fallback, 'fr')
+      || left.order.index - right.order.index
+    ))
+    .map((entry) => entry.chapter);
+}
+
+function buildMangaOrderDescriptor(manga, index = 0) {
+  const metadataVolume = toSortableNumber(manga?.volume);
+  const metadataNumber = toSortableNumber(manga?.number);
+  if (metadataVolume !== null || metadataNumber !== null) {
+    return {
+      tier: 0,
+      volume: metadataVolume ?? 0,
+      number: metadataNumber ?? 0,
+      fallback: String(manga?.displayTitle || manga?.name || '').toLowerCase(),
+      index
+    };
+  }
+
+  const filenameNumber = extractOrderFromText(manga?.displayTitle) ?? extractOrderFromText(manga?.path);
+  if (filenameNumber !== null) {
+    return {
+      tier: 1,
+      volume: 0,
+      number: filenameNumber,
+      fallback: String(manga?.displayTitle || manga?.name || '').toLowerCase(),
+      index
+    };
+  }
+
+  return {
+    tier: 2,
+    volume: 0,
+    number: index,
+    fallback: String(manga?.displayTitle || manga?.name || '').toLowerCase(),
+    index
+  };
+}
+
+function sortMangasForNextCandidate(mangas = []) {
+  return [...mangas]
+    .map((manga, index) => ({ manga, order: buildMangaOrderDescriptor(manga, index) }))
+    .sort((left, right) => (
+      left.order.tier - right.order.tier
+      || left.order.volume - right.order.volume
+      || left.order.number - right.order.number
+      || left.order.fallback.localeCompare(right.order.fallback, 'fr')
+      || left.order.index - right.order.index
+    ))
+    .map((entry) => entry.manga);
 }
 
 function buildMangaAggregate(manga) {
@@ -293,6 +552,7 @@ export default function App() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMangaIds, setSelectedMangaIds] = useState([]);
   const [maintenanceStats, setMaintenanceStats] = useState(null);
+  const [syncStatus, setSyncStatus] = useState(null);
   const [batchCollectionOpen, setBatchCollectionOpen] = useState(false);
   const [batchTagOpen, setBatchTagOpen] = useState(false);
   const [requestedCollectionId, setRequestedCollectionId] = useState(null);
@@ -300,9 +560,67 @@ export default function App() {
   const [chapterPagesCache, setChapterPagesCache] = useState({});
   const [bootError, setBootError] = useState('');
   const [readingQueueOpen, setReadingQueueOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState('');
   const [searchHelpOpen, setSearchHelpOpen] = useState(false);
+  const [advancedSearchState, setAdvancedSearchState] = useState({ query: '', results: [], busy: false, error: '' });
+  const [duplicateCandidates, setDuplicateCandidates] = useState([]);
+  const [ocrStatus, setOcrStatus] = useState(null);
+  const [migrationStatus, setMigrationStatus] = useState(null);
+  const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationFeedback, setMigrationFeedback] = useState('');
+  const [plugins, setPlugins] = useState([]);
+  const [pluginBusyId, setPluginBusyId] = useState(null);
+  const [pluginFeedback, setPluginFeedback] = useState('');
+  const [addEntryMenuAnchor, setAddEntryMenuAnchor] = useState(null);
+  const [sourcesSection, setSourcesSection] = useState('explorer');
+  const [sourceExplorerContext, setSourceExplorerContext] = useState(null);
   const [panicSession, setPanicSession] = useState('inactive');
+  const [vaultCategoryFilterId, setVaultCategoryFilterId] = useState(null);
+  const [renderedInterfaceMode, setRenderedInterfaceMode] = useState(null);
+  const [interfaceTransitioning, setInterfaceTransitioning] = useState(false);
+  const [interfaceTransitionError, setInterfaceTransitionError] = useState('');
+  const [textPromptState, setTextPromptState] = useState({
+    open: false,
+    title: '',
+    description: '',
+    label: 'Nom',
+    defaultValue: '',
+    placeholder: '',
+    confirmLabel: 'Valider',
+    cancelLabel: 'Annuler',
+    onConfirm: null
+  });
   const scrollPositionsRef = useRef({});
+  const screenHistoryRef = useRef([]);
+  const legacyExperimentalPatchPendingRef = useRef(false);
+  const readerSessionStoreRef = useRef(null);
+  const interfaceTransitionLockRef = useRef(false);
+  const previousInterfaceModeRef = useRef('sawa');
+  if (!readerSessionStoreRef.current) {
+    readerSessionStoreRef.current = createReaderSessionStore({
+      persistProgress: (progress) => window.mangaAPI.updateProgressLight(progress),
+      commitProgress: (progress, meta) => commitReaderProgress(progress, meta),
+      persistSettings: (settings) => window.mangaAPI.updateSettingsLight({
+        kavitaReaderSettings: settings
+      }),
+      commitSettings: (settings) => commitKavitaReaderSettings(settings)
+    });
+  }
+
+  // Stable callback wrappers — prop-level handlers below are redeclared on every render (plain
+  // `function` declarations), which breaks React.memo on LibraryView/Dashboard/VaultView/etc. and
+  // cascades into re-rendering every visible MangaCard. We read the latest implementation through
+  // a ref so the wrappers keep a stable identity for the whole component lifetime.
+  const latestHandlersRef = useRef({});
+  const stableOpenManga = useCallback((id) => latestHandlersRef.current.openMangaInCurrentTab?.(id), []);
+  const stableOpenMangaInNewTab = useCallback((id, options) => latestHandlersRef.current.openMangaInNewTab?.(id, options), []);
+  const stableOpenMangaInBackgroundTab = useCallback((id) => latestHandlersRef.current.openMangaInNewTab?.(id, { activate: false }), []);
+  const stableToggleFavorite = useCallback((id) => latestHandlersRef.current.handleToggleFavorite?.(id), []);
+  const stableToggleSelectedManga = useCallback((id) => latestHandlersRef.current.toggleSelectedManga?.(id), []);
+  const stableToggleSelectionMode = useCallback(() => latestHandlersRef.current.toggleSelectionMode?.(), []);
+  const stableOpenContextMenu = useCallback((event, context) => latestHandlersRef.current.openContextMenu?.(event, context), []);
+  const stableResumeManga = useCallback((id) => latestHandlersRef.current.resumeMangaInCurrentTab?.(id), []);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? INITIAL_WORKSPACE,
@@ -357,7 +675,10 @@ export default function App() {
 
   useEffect(() => {
     let unsubscribe = () => {};
+    let unsubscribeSync = () => {};
     let disposed = false;
+    let idleProbeId = null;
+    let syncProbeTimer = null;
     const signalBootReady = () => {
       try {
         window.mangaAPI?.signalBootReady?.();
@@ -372,12 +693,34 @@ export default function App() {
         if (disposed) return;
         setBootError('');
         setPayload(nextPayload);
+        setPlugins(Array.isArray(nextPayload?.plugins) ? nextPayload.plugins : []);
+        const runSyncProbe = () => {
+          window.mangaAPI.getSyncStatus().then((status) => {
+            if (!disposed) setSyncStatus(status);
+          }).catch(() => {
+            if (!disposed) setSyncStatus(null);
+          });
+        };
+        if (typeof window.requestIdleCallback === 'function') {
+          idleProbeId = window.requestIdleCallback(runSyncProbe, { timeout: 1600 });
+        } else {
+          syncProbeTimer = window.setTimeout(runSyncProbe, 900);
+        }
         const restoredSession = restoreSessionModel(nextPayload?.persisted?.session);
         setWorkspaces(restoredSession.workspaces);
         setActiveWorkspaceId(restoredSession.activeWorkspaceId);
         setPanicSession('inactive');
         unsubscribe = window.mangaAPI.onLibraryChanged((incoming) => {
-          if (!disposed) setPayload(incoming);
+          if (disposed) return;
+          startTransition(() => {
+            setPayload((previous) => mergePayloadForStability(previous, incoming));
+            if (Array.isArray(incoming?.plugins)) {
+              setPlugins(incoming.plugins);
+            }
+          });
+        });
+        unsubscribeSync = window.mangaAPI.onSyncStatusChanged((incoming) => {
+          if (!disposed) setSyncStatus(incoming);
         });
         signalBootReady();
       } catch (error) {
@@ -391,7 +734,14 @@ export default function App() {
     boot();
     return () => {
       disposed = true;
+      if (idleProbeId != null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleProbeId);
+      }
+      if (syncProbeTimer != null) {
+        window.clearTimeout(syncProbeTimer);
+      }
       unsubscribe();
+      unsubscribeSync();
     };
   }, []);
 
@@ -425,6 +775,17 @@ export default function App() {
   }, [payload, workspaces, activeWorkspaceId]);
 
   useEffect(() => {
+    const addonSourcesWebActif = plugins.some(
+      (plugin) => plugin.id === 'sources-web' && plugin.installed && plugin.enabled
+    );
+    if (addonSourcesWebActif) return;
+    setAddEntryMenuAnchor(null);
+    setSourcesSection('explorer');
+    setSourceExplorerContext(null);
+    setActiveScreen((current) => (current === 'sources' ? 'library' : current));
+  }, [plugins]);
+
+  useEffect(() => {
     if (panicSession !== 'recovered') return undefined;
     const timer = window.setTimeout(() => {
       setPanicSession('inactive');
@@ -432,12 +793,105 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [panicSession]);
 
-  const theme = normalizeThemeName(payload?.persisted.ui.theme);
+  const persistedUi = payload?.persisted?.ui ?? {};
+  const theme = normalizeThemeName(persistedUi.theme);
+  const persistedInterfaceMode = normalizeInterfaceMode(persistedUi);
+  const interfaceMode = renderedInterfaceMode || persistedInterfaceMode;
+  const interfaceClassName = 'interface-sawa';
   const ui = {
-    ...(payload?.persisted.ui ?? {}),
-    theme
+    ...persistedUi,
+    theme,
+    interfaceMode,
+    experimental: {
+      ...(persistedUi.experimental || {}),
+      advancedSearch: true,
+      archiveFormats: true,
+      ocr: true,
+      pluginPreview: true,
+      visualReader: false,
+      guidedView: false,
+      visualDedupe: false
+    }
   };
+
+  useEffect(() => {
+    if (!renderedInterfaceMode && payload) {
+      setRenderedInterfaceMode(persistedInterfaceMode);
+      previousInterfaceModeRef.current = persistedInterfaceMode;
+    }
+  }, [payload, persistedInterfaceMode, renderedInterfaceMode]);
+
+  useEffect(() => {
+    if (!payload || interfaceMode === 'kavita') return undefined;
+    const preload = () => {
+      void preloadKavitaShell().catch(() => {});
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(preload, { timeout: 2500 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const timer = window.setTimeout(preload, 800);
+    return () => window.clearTimeout(timer);
+  }, [interfaceMode, payload]);
+
+  useEffect(() => {
+    if (!payload) return;
+    const persistedExperimental = payload?.persisted?.ui?.experimental || {};
+    if (!persistedExperimental.visualReader && !persistedExperimental.guidedView && !persistedExperimental.visualDedupe) {
+      legacyExperimentalPatchPendingRef.current = false;
+      return;
+    }
+    if (legacyExperimentalPatchPendingRef.current) {
+      return;
+    }
+    legacyExperimentalPatchPendingRef.current = true;
+    const patchedExperimental = {
+      ...persistedExperimental,
+      visualReader: false,
+      guidedView: false,
+      visualDedupe: false
+    };
+    const applyLegacyPatch = window.mangaAPI.updateSettingsLight
+      ? window.mangaAPI.updateSettingsLight({ experimental: patchedExperimental })
+      : window.mangaAPI.updateSettings({ experimental: patchedExperimental });
+    applyLegacyPatch.then((nextPayload) => {
+      legacyExperimentalPatchPendingRef.current = false;
+      if (nextPayload?.persisted) {
+        setPayload(nextPayload);
+      } else {
+        startTransition(() => {
+          setPayload((previous) => mergeUiSettingsIntoPayload(previous, { experimental: patchedExperimental }));
+        });
+      }
+    }).catch(() => {
+      legacyExperimentalPatchPendingRef.current = false;
+      // Garder l'UI stable meme si la migration de flags ne passe pas du premier coup.
+    });
+  }, [
+    payload,
+    payload?.persisted?.ui?.experimental?.visualReader,
+    payload?.persisted?.ui?.experimental?.guidedView,
+    payload?.persisted?.ui?.experimental?.visualDedupe
+  ]);
+
+  const keyboardShortcuts = useMemo(() => {
+    const customShortcuts = ui.keyboardShortcuts || {};
+    return Object.fromEntries(
+      Object.entries(DEFAULT_KEYBOARD_SHORTCUTS).map(([id, shortcut]) => [
+        id,
+        typeof customShortcuts[id] === 'string' && customShortcuts[id].trim()
+          ? customShortcuts[id]
+          : shortcut
+      ])
+    );
+  }, [ui.keyboardShortcuts]);
+  const experimental = ui.experimental ?? {};
   const library = payload?.library ?? { categories: [], allMangas: [], favorites: [], recents: [] };
+  const webSourcesPlugin = useMemo(
+    () => (plugins.find((plugin) => plugin.id === 'sources-web') ?? payload?.plugins?.find?.((plugin) => plugin.id === 'sources-web') ?? null),
+    [plugins, payload?.plugins]
+  );
+  const webSourcesEnabled = Boolean(webSourcesPlugin?.installed && webSourcesPlugin?.enabled);
 
   const selectedCategoryId = payload?.persisted.ui.selectedCategoryId ?? null;
   const selectedCategory = library.categories.find((category) => category.id === selectedCategoryId) ?? null;
@@ -448,10 +902,58 @@ export default function App() {
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? INITIAL_TAB;
   const activeView = getTabView(activeTab);
-  const activeScrollKey = useMemo(() => makeViewScrollKey(activeTab?.id || 'tab', activeView, activeScreen, selectedCategoryId), [activeTab?.id, activeView, activeScreen, selectedCategoryId]);
+  const activeScrollScope = activeScreen === 'vault'
+    ? `vault:${vaultCategoryFilterId ?? 'all'}`
+    : activeScreen === 'sources'
+      ? `sources:${sourcesSection || 'explorer'}`
+      : `category:${selectedCategoryId ?? 'all'}`;
+  const activeScrollKey = useMemo(
+    () => makeViewScrollKey(activeTab?.id || 'tab', activeView, activeScreen, activeScrollScope),
+    [activeTab?.id, activeView, activeScreen, activeScrollScope]
+  );
   const activeInitialScrollTop = scrollPositionsRef.current[activeScrollKey] ?? 0;
+
+  useEffect(() => {
+    window.mangaAPI?.setReaderActive?.(activeView.screen === 'reader');
+    return () => {
+      window.mangaAPI?.setReaderActive?.(false);
+    };
+  }, [activeView.screen]);
+
+  useEffect(() => {
+    const flushOnBlur = () => {
+      void flushReaderSession().catch(() => {});
+    };
+    window.addEventListener('blur', flushOnBlur);
+    return () => {
+      window.removeEventListener('blur', flushOnBlur);
+      void flushReaderSession().catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    let lastSignalAt = 0;
+    const emitInteraction = () => {
+      const now = Date.now();
+      if ((now - lastSignalAt) < 1200) return;
+      lastSignalAt = now;
+      window.mangaAPI?.markInteraction?.();
+    };
+
+    window.addEventListener('pointerdown', emitInteraction, { passive: true });
+    window.addEventListener('keydown', emitInteraction);
+    window.addEventListener('wheel', emitInteraction, { passive: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', emitInteraction);
+      window.removeEventListener('keydown', emitInteraction);
+      window.removeEventListener('wheel', emitInteraction);
+    };
+  }, []);
   const captureCurrentViewScroll = useCallback(() => {
-    const currentScrollable = document.querySelector('.library-view, .detail-view, .preview-view, .dashboard-view, .collections-view');
+    const currentScrollable = document.querySelector(
+      '.library-view, .detail-view, .preview-view, .dashboard-view, .collections-view, .vault-view, .maintenance-view, .workbench-view, .sources-view'
+    );
     if (currentScrollable) {
       scrollPositionsRef.current[activeScrollKey] = currentScrollable.scrollTop || 0;
     }
@@ -472,7 +974,68 @@ export default function App() {
     return library.allMangas;
   }, [activeScreen, library]);
 
-  const parsedSearch = useMemo(() => parseSearchQuery(search), [search]);
+  const deferredSearch = useDeferredValue(search);
+  const parsedSearch = useMemo(() => parseSearchQuery(deferredSearch), [deferredSearch]);
+  const advancedSearchQuery = useMemo(
+    () => (parsedSearch.textTerms || []).join(' ').trim(),
+    [parsedSearch]
+  );
+
+  useEffect(() => {
+    if (!payload || !advancedSearchQuery) {
+      setAdvancedSearchState({ query: '', results: [], busy: false, error: '' });
+      return;
+    }
+
+    let disposed = false;
+    setAdvancedSearchState((prev) => ({
+      ...prev,
+      query: advancedSearchQuery,
+      busy: true,
+      error: ''
+    }));
+
+    window.mangaAPI.searchAdvanced({ query: advancedSearchQuery, limit: 120 }).then((result) => {
+      if (disposed) return;
+      setAdvancedSearchState({
+        query: result?.query || advancedSearchQuery,
+        results: Array.isArray(result?.results) ? result.results : [],
+        busy: false,
+        error: ''
+      });
+    }).catch((error) => {
+      if (disposed) return;
+      setAdvancedSearchState({
+        query: advancedSearchQuery,
+        results: [],
+        busy: false,
+        error: error?.message || 'Recherche avancee indisponible.'
+      });
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [payload, advancedSearchQuery]);
+
+  const advancedSearchMangaIds = useMemo(() => {
+    if (!advancedSearchQuery) return null;
+    const matches = new Set();
+    (advancedSearchState.results || []).forEach((result) => {
+      const directManga = findManga(library, result?.itemContentId || result?.itemLocationId);
+      if (directManga) {
+        matches.add(directManga.id);
+        return;
+      }
+
+      library.allMangas.forEach((manga) => {
+        if ((manga.chapters || []).some((chapter) => matchesEntityReference(chapter, result?.itemContentId || result?.itemLocationId))) {
+          matches.add(manga.id);
+        }
+      });
+    });
+    return matches;
+  }, [advancedSearchQuery, advancedSearchState.results, library]);
 
   const filteredMangas = useMemo(() => {
     const byCategory = baseMangas.filter((manga) => {
@@ -480,11 +1043,28 @@ export default function App() {
       if (selectedCategory && manga.categoryId !== selectedCategory.id) return false;
       return true;
     });
-    const bySearch = applySearchQuery(byCategory, parsedSearch, {
+    const indexedCandidates = advancedSearchMangaIds instanceof Set
+      ? byCategory.filter((manga) => advancedSearchMangaIds.has(manga.id))
+      : byCategory;
+    const bySearch = applySearchQuery(indexedCandidates, parsedSearch, {
       collectionsById: payload?.persisted?.collections || {}
     });
     return sortMangas(bySearch, ui.sort);
-  }, [baseMangas, parsedSearch, payload?.persisted?.collections, ui.showHiddenCategories, ui.sort, selectedCategory]);
+  }, [advancedSearchMangaIds, baseMangas, parsedSearch, payload?.persisted?.collections, ui.showHiddenCategories, ui.sort, selectedCategory]);
+
+  const searchStatus = useMemo(() => {
+    if (!advancedSearchQuery) return null;
+    if (advancedSearchState.busy) {
+      return { label: 'index local...', tone: 'neutral' };
+    }
+    if (advancedSearchState.error) {
+      return { label: 'index indisponible', tone: 'warning' };
+    }
+    return {
+      label: `index local ${advancedSearchState.results.length}`,
+      tone: 'success'
+    };
+  }, [advancedSearchQuery, advancedSearchState]);
 
   const searchChips = useMemo(
     () => formatSearchChips(parsedSearch, { collectionsById: payload?.persisted?.collections || {} }),
@@ -504,6 +1084,14 @@ export default function App() {
   const sidebarPins = useMemo(
     () => (Array.isArray(ui.sidebarPins) ? ui.sidebarPins : []),
     [ui.sidebarPins]
+  );
+  const sidebarSections = useMemo(
+    () => (Array.isArray(ui.sidebarSections) ? ui.sidebarSections : []),
+    [ui.sidebarSections]
+  );
+  const sidebarHiddenSections = useMemo(
+    () => (ui.sidebarHiddenSections && typeof ui.sidebarHiddenSections === 'object' ? ui.sidebarHiddenSections : {}),
+    [ui.sidebarHiddenSections]
   );
 
   const selectedMangaIdSet = useMemo(
@@ -541,7 +1129,6 @@ export default function App() {
     systemProtectionAvailable: false,
     stealthMode: false
   };
-  const [vaultCategoryFilterId, setVaultCategoryFilterId] = useState(null);
   const vaultCategories = useMemo(
     () => (Array.isArray(vaultLibrary.categories) ? vaultLibrary.categories : []),
     [vaultLibrary.categories]
@@ -607,10 +1194,14 @@ export default function App() {
   }, [vaultCategories, vaultCategoryFilterId]);
 
   const maintenanceIssues = useMemo(() => {
+    const collectDetails = activeScreen === 'maintenance';
     const missingCover = [];
     const missingMetadata = [];
     const sparseChapters = [];
     const duplicateMap = new Map();
+    let missingCoverCount = 0;
+    let missingMetadataCount = 0;
+    let sparseChaptersCount = 0;
 
     library.allMangas.forEach((manga) => {
       const displayTitle = manga.displayTitle || manga.name || 'Manga';
@@ -621,58 +1212,75 @@ export default function App() {
         .replace(/[^a-z0-9]/g, '');
 
       if (normalizedTitle) {
-        const group = duplicateMap.get(normalizedTitle) ?? [];
-        group.push(manga);
-        duplicateMap.set(normalizedTitle, group);
+        if (collectDetails) {
+          const group = duplicateMap.get(normalizedTitle) ?? [];
+          group.push(manga);
+          duplicateMap.set(normalizedTitle, group);
+        } else {
+          duplicateMap.set(normalizedTitle, (duplicateMap.get(normalizedTitle) || 0) + 1);
+        }
       }
 
       if (!manga.coverSrc || manga.coverType === 'default') {
-        missingCover.push(manga);
+        missingCoverCount += 1;
+        if (collectDetails) missingCover.push(manga);
       }
 
       const hasAuthor = typeof manga.author === 'string' && manga.author.trim();
       const hasDescription = typeof manga.description === 'string' && manga.description.trim();
       if (!hasAuthor || !hasDescription) {
-        missingMetadata.push(manga);
+        missingMetadataCount += 1;
+        if (collectDetails) missingMetadata.push(manga);
       }
 
       const chapters = Array.isArray(manga.chapters) ? manga.chapters : [];
       if (!chapters.length) {
-        sparseChapters.push({ manga, reason: 'Aucun chapitre detecte dans ce dossier.' });
+        sparseChaptersCount += 1;
+        if (collectDetails) {
+          sparseChapters.push({ manga, reason: 'Aucun chapitre detecte dans ce dossier.' });
+        }
         return;
       }
 
       const emptyChapter = chapters.find((chapter) => !chapter.pageCount || chapter.pageCount <= 0);
       if (emptyChapter) {
-        sparseChapters.push({
-          manga,
-          reason: `${emptyChapter.name || 'Chapitre'} semble vide ou incomplet.`
-        });
+        sparseChaptersCount += 1;
+        if (collectDetails) {
+          sparseChapters.push({
+            manga,
+            reason: `${emptyChapter.name || 'Chapitre'} semble vide ou incomplet.`
+          });
+        }
       }
     });
 
-    const duplicateGroups = [...duplicateMap.entries()]
-      .filter(([, mangas]) => mangas.length > 1)
-      .map(([key, mangas]) => ({
-        key,
-        mangas,
-        label: mangas[0]?.displayTitle || mangas[0]?.name || 'Titre proche'
-      }));
+    const duplicateGroups = collectDetails
+      ? [...duplicateMap.entries()]
+        .filter(([, mangas]) => mangas.length > 1)
+        .map(([key, mangas]) => ({
+          key,
+          mangas,
+          label: mangas[0]?.displayTitle || mangas[0]?.name || 'Titre proche'
+        }))
+      : [];
+    const duplicateGroupCount = collectDetails
+      ? duplicateGroups.length
+      : [...duplicateMap.values()].filter((count) => count > 1).length;
 
     return {
       missingCover,
       missingMetadata,
       sparseChapters,
-      duplicateGroups
+      duplicateGroups,
+      missingCoverCount,
+      missingMetadataCount,
+      sparseChaptersCount,
+      duplicateGroupCount,
+      totalCount: missingCoverCount + missingMetadataCount + sparseChaptersCount + duplicateGroupCount
     };
-  }, [library.allMangas]);
+  }, [activeScreen, library.allMangas]);
 
-  const maintenanceCount = (
-    maintenanceIssues.missingCover.length
-    + maintenanceIssues.missingMetadata.length
-    + maintenanceIssues.sparseChapters.length
-    + maintenanceIssues.duplicateGroups.length
-  );
+  const maintenanceCount = maintenanceIssues.totalCount || 0;
 
   const dashboardMangas = useMemo(
     () => library.allMangas.filter((manga) => !manga.categoryHidden),
@@ -722,15 +1330,40 @@ export default function App() {
   useEffect(() => {
     if (!payload || activeScreen !== 'maintenance') return;
     let disposed = false;
-    window.mangaAPI.getStats().then((stats) => {
-      if (!disposed) setMaintenanceStats(stats);
+    window.mangaAPI.getStats({ includeOcr: activeScreen === 'maintenance' }).then((stats) => {
+      if (!disposed) {
+        setMaintenanceStats(stats);
+        if (stats?.syncStatus) setSyncStatus(stats.syncStatus);
+        if (stats?.ocr) setOcrStatus(stats.ocr);
+      }
     }).catch(() => {
       if (!disposed) setMaintenanceStats(null);
+    });
+    window.mangaAPI.getMigrationStatus?.().then((status) => {
+      if (!disposed) setMigrationStatus(status);
+    }).catch(() => {
+      if (!disposed) setMigrationStatus(null);
+    });
+
+    setDuplicateCandidates([]);
+    return () => {
+      disposed = true;
+    };
+  }, [!!payload, activeScreen]);
+
+  useEffect(() => {
+    if (!settingsOpen) return undefined;
+    let disposed = false;
+    setPluginFeedback('');
+    window.mangaAPI.listPlugins().then((result) => {
+      if (!disposed) setPlugins(Array.isArray(result?.plugins) ? result.plugins : []);
+    }).catch(() => {
+      if (!disposed) setPlugins([]);
     });
     return () => {
       disposed = true;
     };
-  }, [payload, activeScreen]);
+  }, [settingsOpen]);
 
   useEffect(() => {
     if (!currentChapterData.chapter?.path) return;
@@ -788,6 +1421,7 @@ export default function App() {
     return tabs.map((tab) => {
       const view = getTabView(tab);
       const manga = view.mangaId ? findManga(entityLibrary, view.mangaId) : null;
+      const secureMeta = (meta) => neutralizeLockedVaultTabs(meta, view, vaultState, manga);
       const chapter = view.chapterId && manga
         ? manga.chapters.find((item) => matchesEntityReference(item, view.chapterId)) ?? null
         : null;
@@ -801,6 +1435,7 @@ export default function App() {
           recents: 'Recents',
           maintenance: 'Entretien',
           workbench: 'Atelier',
+          sources: 'Sources web',
           vault: 'Coffre'
         };
         const screenSubtitles = {
@@ -810,46 +1445,47 @@ export default function App() {
           recents: 'Dernieres lectures',
           maintenance: 'Centre d entretien',
           workbench: 'Metadata et covers en lot',
+          sources: sourcesSection === 'catalogue' ? 'Depots et extensions' : 'Recherche et import',
           vault: 'Zone privee'
         };
-        return {
+        return secureMeta({
           id: tab.id,
           kind: 'library',
           pinned: Boolean(tab.pinned),
           label: screenLabels[activeScreen] || 'Bibliotheque',
           subtitle: screenSubtitles[activeScreen] || selectedCategory?.name || 'Toute la bibliotheque'
-        };
+        });
       }
 
       if (view.screen === 'manga') {
-        return {
+        return secureMeta({
           id: tab.id,
           kind: 'manga',
           pinned: Boolean(tab.pinned),
           label: manga?.displayTitle ?? 'Manga',
           subtitle: manga?.author || 'Détails du manga'
-        };
+        });
       }
 
       if (view.screen === 'preview') {
-        return {
+        return secureMeta({
           id: tab.id,
           kind: 'preview',
           pinned: Boolean(tab.pinned),
           label: manga?.displayTitle ?? 'Aperçu',
           subtitle: chapter?.name ?? 'Aperçu du chapitre'
-        };
+        });
       }
 
-      return {
+      return secureMeta({
         id: tab.id,
         kind: 'reader',
         pinned: Boolean(tab.pinned),
         label: manga?.displayTitle ?? 'Lecture',
         subtitle: chapter?.name ?? 'Mode lecture'
-      };
+      });
     });
-  }, [tabs, entityLibrary, activeScreen, selectedCategory]);
+  }, [tabs, entityLibrary, activeScreen, selectedCategory, sourcesSection, vaultState]);
 
   const activeTabMeta = useMemo(
     () => tabsMeta.find((tab) => tab.id === activeTabId) ?? tabsMeta[0] ?? null,
@@ -886,6 +1522,10 @@ export default function App() {
         setReadingQueueOpen(false);
         handled = true;
       }
+      if (commandPaletteOpen) {
+        setCommandPaletteOpen(false);
+        handled = true;
+      }
       if (searchHelpOpen) {
         setSearchHelpOpen(false);
         handled = true;
@@ -900,11 +1540,83 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [readingQueueOpen, searchHelpOpen]);
+  }, [readingQueueOpen, commandPaletteOpen, searchHelpOpen]);
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      const tagName = target?.tagName?.toLowerCase();
+      return target?.isContentEditable || ['input', 'textarea', 'select'].includes(tagName);
+    };
+
+    const onKeyDown = (event) => {
+      const lowerKey = String(event.key || '').toLowerCase();
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || lowerKey !== 'k') return;
+      if (isEditableTarget(event.target) && !commandPaletteOpen) return;
+      event.preventDefault();
+      setCommandPaletteOpen((prev) => !prev);
+      setCommandPaletteQuery('');
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [commandPaletteOpen]);
+
+  function mergeUiSettingsIntoPayload(previousPayload, patch = {}) {
+    if (!previousPayload || !patch || typeof patch !== 'object') return previousPayload;
+    const previousPersisted = previousPayload.persisted || {};
+    const previousUi = previousPersisted.ui || {};
+    const nextUi = {
+      ...previousUi,
+      ...patch,
+      experimental: patch?.experimental
+        ? {
+            ...(previousUi.experimental || {}),
+            ...patch.experimental
+          }
+        : (previousUi.experimental || {})
+    };
+    return {
+      ...previousPayload,
+      persisted: {
+        ...previousPersisted,
+        ui: nextUi
+      }
+    };
+  }
+
+  function mergeVaultPrefsIntoPayload(previousPayload, patch = {}) {
+    if (!previousPayload || !patch || typeof patch !== 'object') return previousPayload;
+    const previousPersisted = previousPayload.persisted || {};
+    const previousVault = previousPersisted.vault || {};
+    const nextVault = {
+      ...previousVault,
+      ...patch
+    };
+    return {
+      ...previousPayload,
+      persisted: {
+        ...previousPersisted,
+        vault: nextVault
+      }
+    };
+  }
 
   async function refreshWith(promise) {
     const nextPayload = await promise;
-    setPayload(nextPayload);
+    startTransition(() => {
+      setPayload((previous) => mergePayloadForStability(previous, nextPayload));
+    });
+  }
+
+  function scheduleBackgroundBootstrapRefresh(delay = 1200) {
+    window.setTimeout(() => {
+      const run = () => refreshWith(window.mangaAPI.bootstrap()).catch(() => {});
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(run, { timeout: 3500 });
+      } else {
+        run();
+      }
+    }, delay);
   }
 
   function pushViewToActive(nextView) {
@@ -928,7 +1640,8 @@ export default function App() {
     }));
   }
 
-  function popActiveView() {
+  async function popActiveView() {
+    await flushReaderSession();
     captureCurrentViewScroll();
     setTabs((prev) => prev.map((tab) => {
       if (tab.id !== activeTabId) return tab;
@@ -950,12 +1663,14 @@ export default function App() {
     return newTab.id;
   }
 
-  function openNewLibraryTab(options = {}) {
+  async function openNewLibraryTab(options = {}) {
+    await flushReaderSession();
     openNewTab(normalizeView(), [], options);
   }
 
-  function switchWorkspace(workspaceId) {
+  async function switchWorkspace(workspaceId) {
     if (!workspaceId || workspaceId === activeWorkspaceId) return;
+    await flushReaderSession();
     captureCurrentViewScroll();
     setActiveWorkspaceId(workspaceId);
   }
@@ -976,11 +1691,19 @@ export default function App() {
   function renameWorkspace(workspaceId) {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (!workspace) return;
-    const proposedName = window.prompt("Nouveau nom de l'espace:", workspace.name);
-    if (proposedName === null) return;
-    const nextName = proposedName.trim();
-    if (!nextName) return;
-    setWorkspaces((prev) => prev.map((item) => (item.id === workspaceId ? { ...item, name: nextName } : item)));
+    requestTextPrompt({
+      title: "Renommer l'espace",
+      description: 'Choisis un nom simple pour retrouver cet espace rapidement.',
+      label: "Nom de l'espace",
+      defaultValue: workspace.name,
+      placeholder: 'Espace lecture',
+      confirmLabel: 'Renommer',
+      onConfirm: async (value) => {
+        const nextName = String(value || '').trim();
+        if (!nextName) return;
+        setWorkspaces((prev) => prev.map((item) => (item.id === workspaceId ? { ...item, name: nextName } : item)));
+      }
+    });
   }
 
   function deleteWorkspace(workspaceId) {
@@ -1111,7 +1834,8 @@ export default function App() {
     });
   }
 
-  function closeTab(tabId) {
+  async function closeTab(tabId) {
+    await flushReaderSession();
     captureCurrentViewScroll();
     if (tabs.length === 1) {
       setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, stack: [normalizeView()] } : tab)));
@@ -1133,13 +1857,46 @@ export default function App() {
     setTabs((prev) => updater(prev));
   }
 
-  function handleSelectTab(tabId) {
+  async function handleSelectTab(tabId) {
+    if (tabId === activeTabId) return;
+    await flushReaderSession();
     captureCurrentViewScroll();
     setActiveTabId(tabId);
   }
 
-  function handleScreenChange(screen) {
+  function rememberScreenTransition(nextScreen) {
+    if (!nextScreen || nextScreen === activeScreen) return;
+    const history = screenHistoryRef.current;
+    if (history[history.length - 1] !== activeScreen) {
+      history.push(activeScreen);
+      if (history.length > 24) {
+        history.splice(0, history.length - 24);
+      }
+    }
+  }
+
+  function pullPreviousScreen(fallbackScreen = 'library') {
+    const history = screenHistoryRef.current;
+    while (history.length > 0) {
+      const previous = history.pop();
+      if (previous && previous !== activeScreen) return previous;
+    }
+    return fallbackScreen;
+  }
+
+  function navigateToScreen(screen, options = {}) {
+    if (!screen || screen === activeScreen) return;
+    if (options.captureScroll !== false) {
+      captureCurrentViewScroll();
+    }
+    if (!options.replaceHistory) {
+      rememberScreenTransition(screen);
+    }
     setActiveScreen(screen);
+  }
+
+  function handleScreenChange(screen) {
+    navigateToScreen(screen);
     if (screen !== 'collections') {
       setRequestedCollectionId(null);
       setRequestedCollectionsTab('manual');
@@ -1149,50 +1906,58 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    const matchesCloseShortcut = (event) => {
-      const key = String(event.key || '').toLowerCase();
-      const code = String(event.code || '').toLowerCase();
-      return (event.ctrlKey || event.metaKey)
-        && !event.altKey
-        && !event.shiftKey
-        && (key === 'z' || key === 'undo' || code === 'keyz');
-    };
+  function requestTextPrompt(options = {}) {
+    setTextPromptState({
+      open: true,
+      title: options.title || '',
+      description: options.description || '',
+      label: options.label || 'Nom',
+      defaultValue: options.defaultValue || '',
+      placeholder: options.placeholder || '',
+      confirmLabel: options.confirmLabel || 'Valider',
+      cancelLabel: options.cancelLabel || 'Annuler',
+      onConfirm: typeof options.onConfirm === 'function' ? options.onConfirm : null
+    });
+  }
 
-    const onKeyDown = (event) => {
-      const isCloseShortcut = matchesCloseShortcut(event);
-
-      if (!isCloseShortcut) return;
-
-      const target = event.target;
-      const tagName = target?.tagName?.toLowerCase();
-      const isEditable = target?.isContentEditable || ['input', 'textarea', 'select'].includes(tagName);
-      if (isEditable) return;
-
-      event.preventDefault();
-      closeTab(activeTabId);
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyDown);
-    };
-  }, [activeTabId, tabs.length]);
+  function closeTextPrompt() {
+    setTextPromptState((current) => ({
+      ...current,
+      open: false,
+      onConfirm: null
+    }));
+  }
 
   useEffect(() => {
-    const isEditableTarget = (target) => {
-      const tagName = target?.tagName?.toLowerCase();
-      return target?.isContentEditable || ['input', 'textarea', 'select'].includes(tagName);
-    };
-
     const onKeyDown = (event) => {
       if (isEditableTarget(event.target)) return;
-      const key = String(event.key || '');
-      const lowerKey = key.toLowerCase();
 
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && lowerKey === 'q') {
+      const numberedTabIndex = resolveNumberedTabIndex(event, tabs.length);
+      if (numberedTabIndex !== null) {
+        event.preventDefault();
+        void handleSelectTab(tabs[numberedTabIndex].id);
+        return;
+      }
+
+      if (eventMatchesShortcut(event, keyboardShortcuts.closeTab)) {
+        event.preventDefault();
+        closeTab(activeTabId);
+        return;
+      }
+
+      if (eventMatchesShortcut(event, keyboardShortcuts.newTab)) {
+        event.preventDefault();
+        openNewLibraryTab();
+        return;
+      }
+
+      if (eventMatchesShortcut(event, keyboardShortcuts.openCommandPalette)) {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+
+      if (eventMatchesShortcut(event, keyboardShortcuts.toggleReadingQueue)) {
         event.preventDefault();
         if (panicSession !== 'panic') {
           setReadingQueueOpen((prev) => !prev);
@@ -1200,23 +1965,51 @@ export default function App() {
         return;
       }
 
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && lowerKey === 'l') {
+      if (eventMatchesShortcut(event, keyboardShortcuts.panicLock)) {
         event.preventDefault();
         triggerPanicLock();
         return;
       }
 
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && lowerKey === 'tab') {
+      if (eventMatchesShortcut(event, keyboardShortcuts.nextTab)) {
         if (tabs.length <= 1) return;
         event.preventDefault();
         const currentIndex = tabs.findIndex((tab) => tab.id === activeTabId);
         if (currentIndex === -1) return;
-        const direction = event.shiftKey ? -1 : 1;
-        const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
-        setActiveTabId(tabs[nextIndex].id);
+        const nextIndex = (currentIndex + 1 + tabs.length) % tabs.length;
+        void handleSelectTab(tabs[nextIndex].id);
         return;
       }
 
+      if (eventMatchesShortcut(event, keyboardShortcuts.prevTab)) {
+        if (tabs.length <= 1) return;
+        event.preventDefault();
+        const currentIndex = tabs.findIndex((tab) => tab.id === activeTabId);
+        if (currentIndex === -1) return;
+        const nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+        void handleSelectTab(tabs[nextIndex].id);
+        return;
+      }
+
+      if (eventMatchesShortcut(event, keyboardShortcuts.openSettings)) {
+        event.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
+
+      if (eventMatchesShortcut(event, keyboardShortcuts.openSources)) {
+        event.preventDefault();
+        handleOpenWebSources();
+        return;
+      }
+
+      if (eventMatchesShortcut(event, keyboardShortcuts.toggleSidebar)) {
+        event.preventDefault();
+        void toggleSidebarCollapsed();
+        return;
+      }
+
+      const lowerKey = String(event.key || '').toLowerCase();
       if (event.altKey && !event.ctrlKey && !event.metaKey) {
         const digit = Number.parseInt(lowerKey, 10);
         if (Number.isFinite(digit) && digit >= 1 && digit <= MAX_WORKSPACES) {
@@ -1233,14 +2026,9 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [activeTabId, tabs, workspaces, activeWorkspaceId, panicSession]);
+  }, [activeTabId, keyboardShortcuts, panicSession, tabs, workspaces]);
 
   useEffect(() => {
-    const isEditableTarget = (target) => {
-      const tagName = target?.tagName?.toLowerCase();
-      return target?.isContentEditable || ['input', 'textarea', 'select'].includes(tagName);
-    };
-
     const goBack = () => {
       if (settingsOpen) {
         setSettingsOpen(false);
@@ -1249,6 +2037,11 @@ export default function App() {
       if (activeTab.stack.length > 1 || activeView.screen !== 'library') {
         captureCurrentViewScroll();
         popActiveView();
+        return;
+      }
+      if (activeScreen !== 'library') {
+        captureCurrentViewScroll();
+        setActiveScreen(pullPreviousScreen('library'));
       }
     };
 
@@ -1260,14 +2053,10 @@ export default function App() {
         goBack();
         return;
       }
-      if (event.altKey && !event.ctrlKey && !event.metaKey && key === 'arrowleft') {
+      if (eventMatchesShortcut(event, keyboardShortcuts.goBack)) {
         event.preventDefault();
         goBack();
         return;
-      }
-      if (key === 'backspace') {
-        event.preventDefault();
-        goBack();
       }
     };
 
@@ -1284,7 +2073,7 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('mouseup', onMouseUp, true);
     };
-  }, [activeTab.stack.length, activeView.screen, settingsOpen]);
+  }, [activeScreen, activeTab.stack.length, activeView.screen, keyboardShortcuts.goBack, settingsOpen]);
 
   const handleViewScrollPositionChange = useCallback((scrollTop) => {
     scrollPositionsRef.current[activeScrollKey] = scrollTop;
@@ -1355,7 +2144,7 @@ export default function App() {
   const findNextChapterCandidate = useCallback((mangaRef, chapterRef = null) => {
     const manga = findManga(entityLibrary, mangaRef);
     if (!manga) return null;
-    const chapters = Array.isArray(manga.chapters) ? manga.chapters : [];
+    const chapters = sortChaptersForNextCandidate(Array.isArray(manga.chapters) ? manga.chapters : []);
     if (!chapters.length) return null;
     if (!chapterRef) {
       return chapters.find((chapter) => !chapter.isRead) || chapters[0] || null;
@@ -1389,7 +2178,7 @@ export default function App() {
     }
     const manga = findManga(entityLibrary, mangaRef);
     if (!manga) return null;
-    const sameCategory = selectableMangas.filter((entry) => entry.categoryId === manga.categoryId);
+    const sameCategory = sortMangasForNextCandidate(selectableMangas.filter((entry) => entry.categoryId === manga.categoryId));
     const currentIndex = sameCategory.findIndex((entry) => matchesEntityReference(entry, mangaRef));
     if (currentIndex >= 0 && currentIndex < sameCategory.length - 1) {
       const nextManga = sameCategory[currentIndex + 1];
@@ -1433,11 +2222,63 @@ export default function App() {
   }
 
   async function handleSelectCategory(categoryId) {
-    await refreshWith(window.mangaAPI.updateSettings({ selectedCategoryId: categoryId }));
+    await handleUpdateSettings({ selectedCategoryId: categoryId });
+  }
+
+  async function handleOpenAddCategoriesDirect() {
+    await refreshWith(window.mangaAPI.addCategories());
+  }
+
+  function closeAddEntryMenu() {
+    setAddEntryMenuAnchor(null);
   }
 
   async function handleOpenAddCategories() {
-    await refreshWith(window.mangaAPI.addCategories());
+    closeAddEntryMenu();
+    await handleOpenAddCategoriesDirect();
+  }
+
+  function handleAddEntry(event) {
+    if (!webSourcesEnabled) {
+      void handleOpenAddCategoriesDirect();
+      return;
+    }
+
+    const rect = event?.currentTarget?.getBoundingClientRect?.();
+    setAddEntryMenuAnchor(rect ? { left: rect.left, bottom: rect.bottom } : { left: 24, bottom: 92 });
+  }
+
+  function handleOpenWebSources() {
+    closeAddEntryMenu();
+    setSourcesSection('explorer');
+    setSourceExplorerContext(null);
+    handleScreenChange('sources');
+  }
+
+  function handleOpenSourceSeriesForManga(manga) {
+    if (!manga?.sourceWeb?.linked) return;
+    if (!webSourcesEnabled) {
+      setPluginFeedback('Active l addon Sources web pour reprendre cette serie.');
+      setSettingsOpen(true);
+      return;
+    }
+    closeAddEntryMenu();
+    setSettingsOpen(false);
+    setSourcesSection('explorer');
+    setSourceExplorerContext({
+      manga: {
+        id: manga.id || '',
+        contentId: manga.contentId || '',
+        path: manga.path || '',
+        displayTitle: manga.displayTitle || '',
+        sourceWeb: manga.sourceWeb || null
+      },
+      requestedAt: Date.now()
+    });
+    navigateToScreen('sources');
+    if (activeView.screen !== 'library') {
+      replaceActiveView(normalizeView());
+    }
   }
 
   async function handleToggleCategoryHidden(categoryId) {
@@ -1522,24 +2363,198 @@ export default function App() {
   }
 
   async function handleUpdateSettings(patch) {
-    await refreshWith(window.mangaAPI.updateSettings(patch));
+    let normalizedPatch = patch && typeof patch === 'object' ? patch : {};
+    if (!Object.keys(normalizedPatch).length) return;
+    if (Object.prototype.hasOwnProperty.call(normalizedPatch, 'interfaceMode')) {
+      const { interfaceMode: requestedMode, ...remainingPatch } = normalizedPatch;
+      const switched = await handleRequestInterfaceMode(requestedMode);
+      if (!switched) return;
+      normalizedPatch = remainingPatch;
+      if (!Object.keys(normalizedPatch).length) return;
+    }
+
+    startTransition(() => {
+      setPayload((previous) => mergeUiSettingsIntoPayload(previous, normalizedPatch));
+    });
+
+    try {
+      if (window.mangaAPI.updateSettingsLight) {
+        await window.mangaAPI.updateSettingsLight(normalizedPatch);
+      } else {
+        const nextPayload = await window.mangaAPI.updateSettings(normalizedPatch);
+        if (nextPayload?.persisted) {
+          startTransition(() => {
+            setPayload(nextPayload);
+          });
+        }
+      }
+    } catch (_error) {
+      try {
+        const restored = await window.mangaAPI.bootstrap();
+        if (restored?.persisted) {
+          startTransition(() => {
+            setPayload(restored);
+          });
+        }
+      } catch (_) {
+        // On garde l'optimistic UI locale si la persistence echoue temporairement.
+      }
+    }
+  }
+
+  async function handleRequestInterfaceMode(requestedMode) {
+    if (interfaceTransitionLockRef.current) return false;
+    const nextMode = requestedMode === 'kavita' ? 'kavita' : 'sawa';
+    const currentMode = interfaceMode;
+    const coordinator = createInterfaceTransitionCoordinator({
+      flushReaderSession,
+      closeTransientUi: () => {
+        setContextMenu(null);
+        setAddEntryMenuAnchor(null);
+        setCommandPaletteOpen(false);
+        setReadingQueueOpen(false);
+        setSettingsOpen(false);
+      },
+      preloadKavita: preloadKavitaShell,
+      persistMode: async (mode) => {
+        if (!window.mangaAPI.updateSettingsLight) {
+          throw new Error('La persistence legere de l interface est indisponible.');
+        }
+        await window.mangaAPI.updateSettingsLight({ interfaceMode: mode });
+      },
+      applyMode: (mode) => {
+        previousInterfaceModeRef.current = currentMode;
+        setRenderedInterfaceMode(mode);
+        startTransition(() => {
+          setPayload((previous) => mergeUiSettingsIntoPayload(previous, { interfaceMode: mode }));
+        });
+      },
+      setTransition: setInterfaceTransitioning,
+      reportError: setInterfaceTransitionError
+    });
+    setInterfaceTransitionError('');
+    interfaceTransitionLockRef.current = true;
+    try {
+      return await coordinator.request(nextMode, currentMode);
+    } finally {
+      interfaceTransitionLockRef.current = false;
+    }
+  }
+
+  function handleShellMountError(error) {
+    const failedMode = interfaceMode;
+    const fallbackMode = previousInterfaceModeRef.current === failedMode
+      ? (failedMode === 'kavita' ? 'sawa' : 'kavita')
+      : previousInterfaceModeRef.current;
+    setInterfaceTransitionError(error?.message || 'Impossible de monter cette interface.');
+    setRenderedInterfaceMode(fallbackMode);
+    startTransition(() => {
+      setPayload((previous) => mergeUiSettingsIntoPayload(previous, { interfaceMode: fallbackMode }));
+    });
+    void window.mangaAPI.updateSettingsLight?.({ interfaceMode: fallbackMode })?.catch(() => {});
+  }
+
+  async function handleActivateKavitaClean() {
+    await handleUpdateSettings({
+      interfaceMode: 'kavita',
+      cardSize: 'compact',
+      kavitaUpgradePromptSeen: true
+    });
+  }
+
+  async function handleDismissKavitaCleanUpgrade() {
+    await handleUpdateSettings({
+      kavitaUpgradePromptSeen: true
+    });
+  }
+
+  async function handleUpdateVaultPrefs(patch) {
+    const normalizedPatch = patch && typeof patch === 'object' ? patch : {};
+    if (!Object.keys(normalizedPatch).length) return;
+
+    startTransition(() => {
+      setPayload((previous) => mergeVaultPrefsIntoPayload(previous, normalizedPatch));
+    });
+
+    try {
+      if (window.mangaAPI.updateVaultPrefsLight) {
+        await window.mangaAPI.updateVaultPrefsLight(normalizedPatch);
+      } else {
+        const nextPayload = await window.mangaAPI.updateVaultPrefs(normalizedPatch);
+        if (nextPayload?.persisted) {
+          startTransition(() => {
+            setPayload(nextPayload);
+          });
+        }
+      }
+    } catch (_error) {
+      try {
+        const restored = await window.mangaAPI.bootstrap();
+        if (restored?.persisted) {
+          startTransition(() => {
+            setPayload(restored);
+          });
+        }
+      } catch (_) {
+        // Garder l'UI locale si la persistence est momentanement indisponible.
+      }
+    }
+  }
+
+  async function handleSetSidebarSectionVisible(sectionId, visible) {
+    const normalizedId = String(sectionId || '').trim();
+    if (!normalizedId || normalizedId === 'library') return;
+    const nextHidden = { ...sidebarHiddenSections };
+    if (visible) {
+      delete nextHidden[normalizedId];
+    } else {
+      nextHidden[normalizedId] = true;
+    }
+    const nextSections = sidebarSections.includes(normalizedId)
+      ? sidebarSections
+      : [...sidebarSections, normalizedId];
+    await handleUpdateSettings({
+      sidebarSections: nextSections,
+      sidebarHiddenSections: nextHidden
+    });
+  }
+
+  async function handleReorderSidebarSections(nextVisibleOrder) {
+    const safeVisibleOrder = Array.isArray(nextVisibleOrder)
+      ? [...new Set(nextVisibleOrder.map((entry) => String(entry || '').trim()).filter(Boolean))]
+      : [];
+    if (!safeVisibleOrder.includes('library')) {
+      safeVisibleOrder.unshift('library');
+    }
+    const remainder = sidebarSections.filter((sectionId) => !safeVisibleOrder.includes(sectionId));
+    await handleUpdateSettings({
+      sidebarSections: [...safeVisibleOrder, ...remainder]
+    });
   }
 
   async function handleSaveQueryAsSmartCollection() {
     const trimmed = search.trim();
     if (!trimmed) return;
-    const name = window.prompt('Nom de la smart collection :', 'Recherche sauvegardee');
-    if (name === null) return;
-    const smartCollection = buildSmartCollectionFromSearch(parsedSearch, {
-      name: name.trim() || 'Recherche sauvegardee',
-      sort: ui.sort,
-      collectionsById: payload?.persisted?.collections || {},
-      tagsById: payload?.persisted?.tags || {}
+    requestTextPrompt({
+      title: 'Sauver cette requete',
+      description: 'Cette recherche sera convertie en smart collection locale avec tes filtres actuels.',
+      label: 'Nom de la smart collection',
+      defaultValue: 'Recherche sauvegardee',
+      placeholder: 'Serie a suivre',
+      confirmLabel: 'Sauver',
+      onConfirm: async (value) => {
+        const smartCollection = buildSmartCollectionFromSearch(parsedSearch, {
+          name: String(value || '').trim() || 'Recherche sauvegardee',
+          sort: ui.sort,
+          collectionsById: payload?.persisted?.collections || {},
+          tagsById: payload?.persisted?.tags || {}
+        });
+        await handleSaveSmartCollection(smartCollection);
+        navigateToScreen('collections');
+        setRequestedCollectionsTab('smart');
+        setRequestedCollectionId(smartCollection.id);
+      }
     });
-    await handleSaveSmartCollection(smartCollection);
-    setActiveScreen('collections');
-    setRequestedCollectionsTab('smart');
-    setRequestedCollectionId(smartCollection.id);
   }
 
   async function handlePickBackgroundImage() {
@@ -1550,9 +2565,74 @@ export default function App() {
     await refreshWith(window.mangaAPI.removeBackgroundImage());
   }
 
+  async function handleClearCache() {
+    await window.mangaAPI.clearCache();
+    const status = await window.mangaAPI.getSyncStatus().catch(() => null);
+    setSyncStatus(status);
+  }
+
   async function handleForceRescan() {
     setMaintenanceStats(null);
     await refreshWith(window.mangaAPI.forceRescan());
+    const status = await window.mangaAPI.getSyncStatus().catch(() => null);
+    setSyncStatus(status);
+  }
+
+  async function handleRunDeepScan() {
+    setMaintenanceStats(null);
+    const result = await window.mangaAPI.runDeepScan();
+    if (result?.payload) setPayload(result.payload);
+    if (result?.syncStatus) setSyncStatus(result.syncStatus);
+  }
+
+  async function handleRebuildDerivedData() {
+    setMaintenanceStats(null);
+    const result = await window.mangaAPI.rebuildDerivedData();
+    if (result?.payload) setPayload(result.payload);
+    if (result?.syncStatus) setSyncStatus(result.syncStatus);
+  }
+
+  async function handleAnalyzeMigration() {
+    setMigrationBusy(true);
+    setMigrationFeedback('');
+    try {
+      const result = await window.mangaAPI.analyzeMigration?.();
+      if (result?.report) {
+        setMigrationStatus((prev) => ({ ...(prev || {}), pendingReport: result.report }));
+        setMigrationFeedback('Analyse terminee: aucune ecriture effectuee.');
+      }
+    } catch (error) {
+      setMigrationFeedback(error?.message || 'Analyse migration impossible.');
+    } finally {
+      setMigrationBusy(false);
+    }
+  }
+
+  async function handleRunMigration() {
+    setMigrationBusy(true);
+    setMigrationFeedback('');
+    try {
+      const result = await window.mangaAPI.runMigration?.({ createBackup: true });
+      if (result?.status) setMigrationStatus(result.status);
+      setMigrationFeedback(result?.ok ? 'Migration Core v2 terminee avec backup prealable.' : (result?.error || 'Migration non terminee.'));
+    } catch (error) {
+      setMigrationFeedback(error?.message || 'Migration Core v2 impossible.');
+    } finally {
+      setMigrationBusy(false);
+    }
+  }
+
+  async function handleCleanupLegacyStorage() {
+    setMigrationBusy(true);
+    setMigrationFeedback('');
+    try {
+      const result = await window.mangaAPI.cleanupLegacyStorage?.({ confirm: 'cleanup-legacy-json' });
+      setMigrationFeedback(result?.message || (result?.ok ? 'Demande de nettoyage enregistree.' : 'Nettoyage refuse.'));
+    } catch (error) {
+      setMigrationFeedback(error?.message || 'Nettoyage legacy impossible.');
+    } finally {
+      setMigrationBusy(false);
+    }
   }
 
   function clearSelection() {
@@ -1613,7 +2693,7 @@ export default function App() {
   async function handleSetPrivateCategoryFlag(categoryId, isPrivate) {
     await refreshWith(window.mangaAPI.setPrivateCategoryFlag(categoryId, isPrivate));
     if (isPrivate) {
-      setActiveScreen('vault');
+      navigateToScreen('vault');
       setVaultCategoryFilterId(categoryId);
     } else if (vaultCategoryFilterId === categoryId) {
       setVaultCategoryFilterId(null);
@@ -1629,7 +2709,7 @@ export default function App() {
   async function handleQueueWorkbench(mangaIds, mode = 'append') {
     if (!Array.isArray(mangaIds) || mangaIds.length === 0) return;
     await refreshWith(window.mangaAPI.queueMetadataWorkbench(mangaIds, mode));
-    setActiveScreen('workbench');
+    navigateToScreen('workbench');
   }
 
   async function handleReplaceWorkbenchQueue(mangaIds) {
@@ -1671,14 +2751,16 @@ export default function App() {
   async function handleLockVault() {
     const result = await window.mangaAPI.lockVault();
     await applyVaultResult(result);
+    clearSelection();
+    setVaultCategoryFilterId(null);
   }
 
   async function handleToggleVaultBlur() {
-    await refreshWith(window.mangaAPI.updateVaultPrefs({ blurCovers: !vaultState.blurCovers }));
+    await handleUpdateVaultPrefs({ blurCovers: !vaultState.blurCovers });
   }
 
   async function handleToggleVaultStealth() {
-    await refreshWith(window.mangaAPI.updateVaultPrefs({ stealthMode: !vaultState.stealthMode }));
+    await handleUpdateVaultPrefs({ stealthMode: !vaultState.stealthMode });
   }
 
   async function handleUpdateMetadataLocks(mangaId, patch) {
@@ -1694,6 +2776,128 @@ export default function App() {
       setEditingMetadata(findManga(result.payload?.library ?? library, mangaId) || findManga(result.payload?.vaultLibrary ?? vaultLibrary, mangaId));
     }
     return result;
+  }
+
+  async function handleExportComicInfoForManga(mangaId) {
+    return window.mangaAPI.exportComicInfo({ mangaId, mode: 'sidecar' });
+  }
+
+  async function handleRefreshDuplicateCandidates() {
+    const result = await window.mangaAPI.getDuplicateCandidates();
+    setDuplicateCandidates(Array.isArray(result?.candidates) ? result.candidates : []);
+  }
+
+  async function handleEnqueueOcr() {
+    const info = await window.mangaAPI.listOcrLanguages().catch(() => null);
+    const languages = choosePreferredOcrLanguages(info || {});
+    const result = await window.mangaAPI.enqueueOcr({ scope: 'all', languages });
+    if (result?.ok === false && result?.error) {
+      window.alert(result.error);
+      return;
+    }
+    const status = await window.mangaAPI.listOcrLanguages().catch(() => null);
+    if (status) setOcrStatus(status);
+    const nextSync = await window.mangaAPI.getSyncStatus().catch(() => null);
+    if (nextSync) setSyncStatus(nextSync);
+  }
+
+  async function handlePauseOcr() {
+    const result = await window.mangaAPI.pauseOcr();
+    setOcrStatus((prev) => ({ ...(prev || {}), paused: result?.paused !== false }));
+  }
+
+  async function handleResumeOcr() {
+    const result = await window.mangaAPI.resumeOcr();
+    setOcrStatus((prev) => ({ ...(prev || {}), paused: !!result?.paused }));
+  }
+
+  async function handlePurgeOcr() {
+    await window.mangaAPI.purgeOcr();
+    const status = await window.mangaAPI.listOcrLanguages().catch(() => null);
+    if (status) setOcrStatus(status);
+  }
+
+  async function handleSetPluginEnabled(pluginId, enabled) {
+    setPluginBusyId(pluginId);
+    try {
+      const result = await window.mangaAPI.setPluginEnabled(pluginId, enabled);
+      setPlugins(Array.isArray(result?.plugins) ? result.plugins : []);
+      if (!result?.ok) {
+        setPluginFeedback(result?.error || 'Impossible de modifier ce plugin.');
+        return;
+      }
+      setPluginFeedback(
+        pluginId === 'sources-web'
+          ? (enabled ? 'Addon Sources web actif.' : 'Addon Sources web desactive.')
+          : (enabled ? 'Plugin actif.' : 'Plugin desactive.')
+      );
+    } catch (error) {
+      setPluginFeedback(error?.message || 'Impossible de modifier ce plugin.');
+    } finally {
+      setPluginBusyId(null);
+    }
+  }
+
+  async function handleInstallPlugin(pluginId) {
+    setPluginBusyId(pluginId);
+    try {
+      const result = await window.mangaAPI.installPlugin(pluginId);
+      setPlugins(Array.isArray(result?.plugins) ? result.plugins : []);
+      if (!result?.ok) {
+        setPluginFeedback(result?.error || 'Installation du plugin impossible.');
+        return;
+      }
+      setPluginFeedback(pluginId === 'sources-web' ? 'Addon Sources web installe.' : 'Plugin installe avec succes.');
+    } catch (error) {
+      setPluginFeedback(error?.message || 'Installation du plugin impossible.');
+    } finally {
+      setPluginBusyId(null);
+    }
+  }
+
+  async function handleUninstallPlugin(pluginId) {
+    setPluginBusyId(pluginId);
+    try {
+      const result = await window.mangaAPI.uninstallPlugin(pluginId);
+      setPlugins(Array.isArray(result?.plugins) ? result.plugins : []);
+      if (!result?.ok) {
+        setPluginFeedback(result?.error || 'Desinstallation du plugin impossible.');
+        return;
+      }
+      if (pluginId === 'sources-web') {
+        setSourcesSection('explorer');
+        setAddEntryMenuAnchor(null);
+      }
+      setPluginFeedback(pluginId === 'sources-web' ? 'Addon Sources web retire.' : 'Plugin retire.');
+    } catch (error) {
+      setPluginFeedback(error?.message || 'Desinstallation du plugin impossible.');
+    } finally {
+      setPluginBusyId(null);
+    }
+  }
+
+  async function handleOpenPlugin(pluginId) {
+    if (pluginId === 'sources-web') {
+      setPluginFeedback('');
+      setSourcesSection('catalogue');
+      setSettingsOpen(false);
+      handleScreenChange('sources');
+      return;
+    }
+    setPluginBusyId(pluginId);
+    try {
+      const result = await window.mangaAPI.openPlugin(pluginId);
+      setPlugins(Array.isArray(result?.plugins) ? result.plugins : []);
+      if (!result?.ok) {
+        setPluginFeedback(result?.error || 'Lancement du plugin impossible.');
+        return;
+      }
+      setPluginFeedback('Plugin lance.');
+    } catch (error) {
+      setPluginFeedback(error?.message || 'Lancement du plugin impossible.');
+    } finally {
+      setPluginBusyId(null);
+    }
   }
 
   async function handleUpsertQueueItem(draft) {
@@ -1762,7 +2966,7 @@ export default function App() {
     setCollectionPickerManga(null);
     setEditingMetadata(null);
     setTagManagerManga(null);
-    setActiveScreen('dashboard');
+    navigateToScreen('dashboard', { replaceHistory: true, captureScroll: false });
     setVaultCategoryFilterId(null);
     setWorkspaces((prev) => prev.map((workspace) => ({
       ...workspace,
@@ -1810,7 +3014,7 @@ export default function App() {
     if (pin.type === 'collection' || pin.type === 'smart-collection') {
       setRequestedCollectionsTab(pin.type === 'smart-collection' ? 'smart' : 'manual');
       setRequestedCollectionId(pin.refId);
-      setActiveScreen('collections');
+      navigateToScreen('collections');
       if (activeView.screen !== 'library') {
         replaceActiveView(normalizeView());
       }
@@ -1840,12 +3044,14 @@ export default function App() {
     await handleQueueWorkbench(mangaIds, 'append');
   }
 
-  function handleUpdateProgress(progressPayload) {
+  function commitReaderProgress(progressPayload, meta = {}) {
     const now = new Date().toISOString();
+    const targetTabId = meta.tabId || activeTabId;
+    const incognito = meta.incognito ?? activeTab?.incognito;
 
-    if (activeTab?.incognito) {
+    if (incognito) {
       setTabs((prev) => prev.map((tab) => {
-        if (tab.id !== activeTabId) return tab;
+        if (tab.id !== targetTabId) return tab;
         const stack = [...tab.stack];
         const topIndex = stack.length - 1;
         const topView = stack[topIndex];
@@ -1919,21 +3125,23 @@ export default function App() {
           ...prev.persisted,
           progress: nextProgress,
           recents: nextRecents,
-          ui: {
-            ...prev.persisted.ui,
-            readerMode: progressPayload.mode,
-            readerFit: progressPayload.fitMode ?? prev.persisted.ui.readerFit,
-            readerZoom: Number.isFinite(Number(progressPayload.zoom))
-              ? Number(progressPayload.zoom)
-              : (prev.persisted.ui.readerZoom ?? 1)
-          }
+          ui: meta.profile === 'kavita'
+            ? prev.persisted.ui
+            : {
+                ...prev.persisted.ui,
+                readerMode: progressPayload.mode,
+                readerFit: progressPayload.fitMode ?? prev.persisted.ui.readerFit,
+                readerZoom: Number.isFinite(Number(progressPayload.zoom))
+                  ? Number(progressPayload.zoom)
+                  : (prev.persisted.ui.readerZoom ?? 1)
+              }
         },
         library: nextLibrary
       };
     });
 
     setTabs((prev) => prev.map((tab) => {
-      if (tab.id !== activeTabId) return tab;
+      if (tab.id !== targetTabId) return tab;
       const stack = [...tab.stack];
       const topIndex = stack.length - 1;
       const topView = stack[topIndex];
@@ -1946,16 +3154,50 @@ export default function App() {
       return { ...tab, stack };
     }));
 
-    window.mangaAPI.updateProgressLight(progressPayload).catch(() => {
-      // On garde l'UI fluide même si l'écriture disque rate.
+  }
+
+  function handleUpdateProgress(progressPayload) {
+    commitReaderProgress(progressPayload, {
+      tabId: activeTabId,
+      incognito: Boolean(activeTab?.incognito)
+    });
+    if (!activeTab?.incognito) {
+      window.mangaAPI.updateProgressLight(progressPayload).catch(() => {
+        // On garde l'UI fluide meme si l'ecriture disque rate.
+      });
+    }
+  }
+
+  function handleKavitaProgress(progressPayload) {
+    readerSessionStoreRef.current.stageProgress(progressPayload, {
+      tabId: activeTabId,
+      incognito: Boolean(activeTab?.incognito),
+      profile: 'kavita'
     });
   }
 
-  function handleReaderExit() {
-    popActiveView();
-    window.setTimeout(() => {
-      refreshWith(window.mangaAPI.bootstrap()).catch(() => {});
-    }, 0);
+  function handleKavitaReaderSettings(nextSettings) {
+    readerSessionStoreRef.current.stageSettings(nextSettings);
+  }
+
+  function commitKavitaReaderSettings(nextSettings) {
+    startTransition(() => {
+      setPayload((previous) => mergeUiSettingsIntoPayload(previous, {
+        kavitaReaderSettings: {
+          ...(previous?.persisted?.ui?.kavitaReaderSettings || {}),
+          ...nextSettings
+        }
+      }));
+    });
+  }
+
+  async function flushReaderSession() {
+    await readerSessionStoreRef.current.flush({ commit: true });
+  }
+
+  async function handleReaderExit() {
+    await popActiveView();
+    scheduleBackgroundBootstrapRefresh(1400);
   }
 
   function actionItem(label, action, options = {}) {
@@ -1995,6 +3237,9 @@ export default function App() {
         actionItem('Ouvrir dans cet onglet', () => openMangaInCurrentTab(context.manga.id), { icon: <EyeIcon size={14} /> }),
         actionItem('Ouvrir dans un nouvel onglet', () => openMangaInNewTab(context.manga.id), { icon: <PlusIcon size={14} /> }),
         actionItem('Reprendre en incognito', () => resumeMangaInNewTab(context.manga.id, { incognito: true }), { icon: <EyeOffIcon size={14} /> }),
+        ...(context.manga.sourceWeb?.linked ? [
+          actionItem('Voir les chapitres web', () => handleOpenSourceSeriesForManga(context.manga), { icon: <LayersIcon size={14} /> })
+        ] : []),
         separatorItem(),
         actionItem(context.manga.isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris', () => handleToggleFavorite(context.manga.id), {
           icon: <HeartIcon size={14} filled={context.manga.isFavorite} />
@@ -2039,6 +3284,9 @@ export default function App() {
         actionItem('Ouvrir ce chapitre dans un nouvel onglet', () => openChapterInNewTab(context.manga.id, context.chapter.id, context.pageIndex ?? 0), { icon: <PlusIcon size={14} /> }),
         actionItem('Ouvrir en incognito', () => openChapterInNewTab(context.manga.id, context.chapter.id, context.pageIndex ?? 0, { incognito: true }), { icon: <EyeOffIcon size={14} /> }),
         actionItem('Ouvrir le manga dans un nouvel onglet', () => openMangaInNewTab(context.manga.id), { icon: <LayoutGridIcon size={14} /> }),
+        ...(context.manga.sourceWeb?.linked ? [
+          actionItem('Voir les chapitres web', () => handleOpenSourceSeriesForManga(context.manga), { icon: <LayersIcon size={14} /> })
+        ] : []),
         separatorItem(),
         actionItem(context.chapter.isRead ? 'Marquer ce chapitre comme non lu' : 'Marquer ce chapitre comme lu', () => handleSetChapterReadStatus(context.manga.id, context.chapter.id, !context.chapter.isRead, context.chapter.pageCount), {
           icon: <BookIcon size={14} />
@@ -2063,7 +3311,7 @@ export default function App() {
           context.scope === 'vault' ? 'Voir cette categorie dans le coffre' : 'Filtrer sur cette categorie',
           () => {
             if (context.scope === 'vault') {
-              setActiveScreen('vault');
+              navigateToScreen('vault');
               setVaultCategoryFilterId(context.category.id);
               return;
             }
@@ -2077,7 +3325,7 @@ export default function App() {
           { icon: <ArchiveIcon size={14} /> }
         ),
         actionItem('Ouvrir le coffre', () => {
-          setActiveScreen('vault');
+          navigateToScreen('vault');
           setVaultCategoryFilterId(isCategoryPrivate ? context.category.id : null);
         }, { icon: <ArchiveIcon size={14} /> }),
         actionItem(context.category.hidden ? 'Afficher la categorie' : 'Masquer la categorie', () => handleToggleCategoryHidden(context.category.id), {
@@ -2188,10 +3436,10 @@ export default function App() {
 
     items.push(
       actionItem('Nouvel onglet bibliothèque', () => openNewLibraryTab(), { icon: <PlusIcon size={14} /> }),
-      actionItem('Ajouter des catégories', () => handleOpenAddCategories(), { icon: <FolderPlusIcon size={14} /> }),
+      actionItem('Ajouter des catégories', () => handleOpenAddCategoriesDirect(), { icon: <FolderPlusIcon size={14} /> }),
       actionItem('Actualiser la bibliothèque', () => refreshWith(window.mangaAPI.bootstrap()), { icon: <RefreshIcon size={14} /> }),
       actionItem('Ouvrir le coffre', () => {
-        setActiveScreen('vault');
+        navigateToScreen('vault');
         setVaultCategoryFilterId(null);
       }, { icon: <ArchiveIcon size={14} /> }),
       separatorItem(),
@@ -2225,6 +3473,120 @@ export default function App() {
     setContextMenu({ x, y, items });
   }
 
+  const commandPaletteCommands = useMemo(() => {
+    const commands = [
+      {
+        id: 'go-library',
+        label: 'Ouvrir la bibliotheque',
+        description: 'Revenir a la vue principale.',
+        keywords: 'bibliotheque accueil home',
+        action: () => handleScreenChange('library')
+      },
+      {
+        id: 'go-favorites',
+        label: 'Ouvrir les favoris',
+        description: 'Retrouver les titres epingles en coeur.',
+        keywords: 'favoris coeur',
+        action: () => handleScreenChange('favorites')
+      },
+      {
+        id: 'go-recents',
+        label: 'Ouvrir les recents',
+        description: 'Reprendre les dernieres lectures.',
+        keywords: 'recents historique reprise',
+        action: () => handleScreenChange('recents')
+      },
+      {
+        id: 'go-collections',
+        label: 'Ouvrir les collections',
+        description: 'Parcourir les collections manuelles et smart.',
+        keywords: 'collections smart',
+        action: () => handleScreenChange('collections')
+      },
+      {
+        id: 'go-maintenance',
+        label: 'Ouvrir la maintenance',
+        description: 'Voir sync et OCR local.',
+        keywords: 'maintenance ocr sync',
+        action: () => handleScreenChange('maintenance')
+      },
+      {
+        id: 'go-workbench',
+        label: 'Ouvrir l atelier metadata',
+        description: 'Traiter la file metadata en lot.',
+        keywords: 'atelier metadata queue',
+        action: () => handleScreenChange('workbench')
+      },
+      {
+        id: 'go-vault',
+        label: 'Ouvrir le coffre',
+        description: 'Basculer vers les titres proteges.',
+        keywords: 'coffre prive vault',
+        action: () => handleScreenChange('vault')
+      },
+      {
+        id: 'open-settings',
+        label: 'Ouvrir les parametres',
+        description: 'Acceder aux reglages avances et aux preferences.',
+        keywords: 'parametres reglages avances preferences',
+        action: () => setSettingsOpen(true)
+      },
+      {
+        id: 'open-queue',
+        label: 'Ouvrir la queue de lecture',
+        description: 'Voir ce qui vient ensuite.',
+        keywords: 'queue lecture ensuite',
+        action: () => setReadingQueueOpen(true)
+      },
+      {
+        id: 'run-deep-scan',
+        label: 'Lancer un scan profond',
+        description: 'Reconstruit l analyse locale de la bibliotheque.',
+        keywords: 'scan profond analyse',
+        action: () => handleRunDeepScan()
+      },
+      {
+        id: 'rebuild-derived',
+        label: 'Reconstruire les donnees derivees',
+        description: 'Regenerer la base derivee et le cache.',
+        keywords: 'derivees cache sqlite reconstruction',
+        action: () => handleRebuildDerivedData()
+      }
+    ];
+
+    if (webSourcesEnabled) {
+      commands.splice(9, 0, {
+        id: 'open-web-sources',
+        label: 'Ouvrir Sources web',
+        description: 'Rechercher puis importer dans une categorie locale.',
+        keywords: 'sources web import mangadex addon',
+        action: () => {
+          setSourcesSection('explorer');
+          handleScreenChange('sources');
+        }
+      });
+    }
+
+    filteredMangas.slice(0, 6).forEach((manga) => {
+      commands.push({
+        id: `open-manga-${manga.id}`,
+        label: `Ouvrir ${manga.displayTitle || manga.name}`,
+        description: manga.author || manga.categoryName || 'Manga',
+        keywords: `${manga.displayTitle || manga.name} manga lecture`,
+        action: () => openMangaInCurrentTab(manga.id)
+      });
+    });
+
+    return commands;
+  }, [filteredMangas, handleRebuildDerivedData, handleRunDeepScan, webSourcesEnabled]);
+
+  function handleRunCommand(command) {
+    if (!command?.action) return;
+    setCommandPaletteOpen(false);
+    setCommandPaletteQuery('');
+    command.action();
+  }
+
   if (bootError) {
     return (
       <div className="boot-screen">
@@ -2250,20 +3612,187 @@ export default function App() {
     ? `manga://local/${encodeURIComponent(ui.backgroundImage)}`
     : null;
   const bgOpacity = ui.backgroundOpacity ?? 0.15;
+  const showKavitaUpgradeBanner = shouldShowKavitaUpgradeBanner(ui);
   const visibleVaultCount = vaultState.locked ? 0 : (vaultState.privateCount || privateMangas.length);
   const vaultActionLabel = selectedMangas.length > 0 && selectedMangas.every((manga) => manga.isPrivate)
     ? 'Retirer du coffre'
     : 'Envoyer au coffre';
   const shouldShowTopBar = activeView.screen === 'library'
-    && !['dashboard', 'collections', 'maintenance', 'workbench'].includes(activeScreen);
+    && !['dashboard', 'collections', 'maintenance', 'workbench', 'sources'].includes(activeScreen);
   const topBarCategory = activeScreen === 'vault' ? activeVaultCategory : selectedCategory;
   const clearTopBarCategory = activeScreen === 'vault'
     ? () => setVaultCategoryFilterId(null)
     : () => handleSelectCategory(null);
 
+  latestHandlersRef.current.openMangaInCurrentTab = openMangaInCurrentTab;
+  latestHandlersRef.current.openMangaInNewTab = openMangaInNewTab;
+  latestHandlersRef.current.handleToggleFavorite = handleToggleFavorite;
+  latestHandlersRef.current.toggleSelectedManga = toggleSelectedManga;
+  latestHandlersRef.current.toggleSelectionMode = toggleSelectionMode;
+  latestHandlersRef.current.openContextMenu = openContextMenu;
+  latestHandlersRef.current.resumeMangaInCurrentTab = resumeMangaInCurrentTab;
+
+  if (interfaceMode === 'kavita') {
+    const kavitaModel = {
+      ui,
+      activeView,
+      activeScreen,
+      library,
+      mangas: filteredMangas,
+      categories: visibleCategories,
+      selectedCategoryId,
+      currentManga,
+      currentChapter: resolvedChapter,
+      annotations: currentMangaAnnotations,
+      collections: allCollections,
+      tags: allTags,
+      maintenanceIssues,
+      maintenanceStats,
+      workbenchMangas: workbenchQueueMangas,
+      vault: vaultState,
+      vaultMangas: filteredPrivateMangas,
+      vaultCategories,
+      activeVaultCategoryId: vaultCategoryFilterId,
+      plugins,
+      migrationStatus,
+      syncStatus,
+      tabs: tabsMeta,
+      activeTabId,
+      workspaces: workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
+      activeWorkspaceId,
+      search,
+      settingsOpen,
+      selectionMode,
+      selectedIds: selectedMangaIdSet,
+      webSourcesEnabled,
+      actions: {
+        onSearchChange: setSearch,
+        onScreenChange: handleScreenChange,
+        onSelectCategory: handleSelectCategory,
+        onOpenManga: stableOpenManga,
+        onOpenMangaInNewTab: openMangaInNewTab,
+        onResumeMangaIncognito: (mangaId) => resumeMangaInNewTab(mangaId, { incognito: true }),
+        onOpenSourceSeries: handleOpenSourceSeriesForManga,
+        onResumeManga: resumeMangaInCurrentTab,
+        onOpenChapter: openChapterInCurrentTab,
+        onOpenChapterInNewTab: openChapterInNewTab,
+        onOpenChapterIncognito: (mangaId, chapterId, pageIndex = 0) => openChapterInNewTab(
+          mangaId,
+          chapterId,
+          pageIndex,
+          { incognito: true }
+        ),
+        onReadFrom: (mangaId, chapterId, pageIndex) => pushViewToActive({
+          screen: 'reader',
+          mangaId,
+          chapterId,
+          pageIndex
+        }),
+        onReadFromInNewTab: (mangaId, chapterId, pageIndex, options = {}) => openNewTab(
+          { screen: 'reader', mangaId, chapterId, pageIndex },
+          [normalizeView(), { screen: 'manga', mangaId }, { screen: 'preview', mangaId, chapterId }],
+          options
+        ),
+        onReaderExit: handleReaderExit,
+        onOpenReaderChapter: async (chapterId) => {
+          await flushReaderSession();
+          replaceActiveView(buildReaderViewForChapter(currentChapterData.manga?.id, chapterId, 0, true));
+        },
+        onUpdateProgress: handleKavitaProgress,
+        onReaderSettingsChange: handleKavitaReaderSettings,
+        onAddAnnotation: handleAddAnnotation,
+        onDeleteAnnotation: handleDeleteAnnotation,
+        onToggleFavorite: stableToggleFavorite,
+        onSetMangaReadStatus: handleSetReadStatus,
+        onSearchOnlineMetadata: (query) => window.mangaAPI.searchOnlineMetadata(query),
+        onImportOnlineMetadata: handleImportOnlineMetadata,
+        onImportComicInfo: handleImportComicInfoForManga,
+        onPickCover: handlePickCover,
+        onQueueWorkbench: (mangaId) => handleQueueWorkbench([mangaId], 'append'),
+        onAddMangaToQueue: (mangaId) => handleUpsertQueueItem(buildQueueDraft(mangaId, null, 'manual')),
+        onAddNextToQueue: (mangaId, chapterId = null) => {
+          const draft = buildNextQueueDraft(mangaId, chapterId);
+          return draft ? handleUpsertQueueItem(draft) : null;
+        },
+        onSetPrivateFlag: handleSetPrivateFlag,
+        onResetMangaProgress: handleResetProgress,
+        onTrashManga: handleTrashManga,
+        onToggleSelect: stableToggleSelectedManga,
+        onClearSelection: clearSelection,
+        onBack: popActiveView,
+        onSaveMetadata: handleSaveMetadata,
+        onToggleTag: handleToggleTag,
+        onCreateTag: handleCreateTag,
+        onDeleteTag: handleDeleteTag,
+        onAddToCollection: handleAddToCollection,
+        onRemoveFromCollection: handleRemoveMangaFromCollection,
+        onCreateCollection: handleCreateCollection,
+        onSetChapterReadStatus: handleSetChapterReadStatus,
+        onAddChapterToQueue: (mangaId, chapterId) => handleUpsertQueueItem(
+          buildQueueDraft(mangaId, chapterId, 'manual')
+        ),
+        onAddNextChapterToQueue: (mangaId, chapterId) => {
+          const draft = buildNextQueueDraft(mangaId, chapterId);
+          return draft ? handleUpsertQueueItem(draft) : null;
+        },
+        onResetChapterProgress: handleResetChapterProgress,
+        onToggleCategoryHidden: handleToggleCategoryHidden,
+        onRemoveCategory: handleRemoveCategory,
+        onOpenCollection: (collection) => handleActivateSidebarPin({
+          type: collection.isSmart ? 'smart-collection' : 'collection',
+          refId: collection.id,
+          label: collection.name
+        }),
+        onToggleCollectionPin: (collection) => handleToggleSidebarPin({
+          type: collection.isSmart ? 'smart-collection' : 'collection',
+          refId: collection.id,
+          label: collection.name
+        }),
+        onUpdateSettings: handleUpdateSettings,
+        onRequestInterfaceMode: handleRequestInterfaceMode,
+        onSettingsOpenChange: setSettingsOpen,
+        onSelectTab: handleSelectTab,
+        onCloseTab: closeTab,
+        onNewTab: openNewLibraryTab,
+        onReorderTabs: reorderTabs,
+        onToggleTabPin: toggleTabPin,
+        onDuplicateTab: duplicateTab,
+        onCloseOtherTabs: closeOtherTabs,
+        onCloseTabsToRight: closeTabsToRight,
+        onMoveTabToWorkspace: moveTabToWorkspace,
+        onForceRescan: handleForceRescan,
+        onRunDeepScan: handleRunDeepScan,
+        onRebuildDerivedData: handleRebuildDerivedData,
+        onAnalyzeMigration: handleAnalyzeMigration,
+        onRunMigration: handleRunMigration,
+        onSetupVault: handleSetVaultPin,
+        onUnlockVault: handleUnlockVault,
+        onLockVault: handleLockVault,
+        onSelectVaultCategory: setVaultCategoryFilterId,
+        onToggleSelectionMode: stableToggleSelectionMode,
+        onToggleVaultBlur: handleToggleVaultBlur,
+        onToggleVaultStealth: handleToggleVaultStealth
+      }
+    };
+
+    return (
+      <ShellErrorBoundary key={`shell-${interfaceMode}`} onError={handleShellMountError}>
+        <>
+          <Suspense fallback={<LazyPanelPlaceholder label="Chargement de l interface Kavita..." />}>
+            <KavitaShell model={kavitaModel} />
+          </Suspense>
+          {interfaceTransitioning ? <div className="interface-transition-veil" aria-hidden="true" /> : null}
+          {interfaceTransitionError ? <div className="interface-transition-error" role="alert">{interfaceTransitionError}</div> : null}
+        </>
+      </ShellErrorBoundary>
+    );
+  }
+
   return (
-    <div
-      className={`app-shell theme-${theme}`}
+    <ShellErrorBoundary key={`shell-${interfaceMode}`} onError={handleShellMountError}>
+      <>
+      <div
+      className={`app-shell theme-${theme} ${interfaceClassName}`}
       style={{
         '--accent': ui.accent,
         '--accent-alt': ui.accentAlt || '#38bdf8',
@@ -2271,7 +3800,7 @@ export default function App() {
         '--manga-card-min-width': cardSizeMinWidth(ui.cardSize),
         '--manga-grid-gap': cardSizeGridGap(ui.cardSize)
       }}
-      onContextMenu={(event) => openContextMenu(event)}
+      onContextMenu={stableOpenContextMenu}
     >
       {bgImageUrl && (
         <div
@@ -2295,7 +3824,7 @@ export default function App() {
         onSelectTab={handleSelectTab}
         onCloseTab={closeTab}
         onNewTab={openNewLibraryTab}
-        onContextMenu={openContextMenu}
+        onContextMenu={stableOpenContextMenu}
         onReorderTabs={reorderTabs}
         queueCount={readingQueueEntries.length}
         queueOpen={readingQueueOpen}
@@ -2312,6 +3841,46 @@ export default function App() {
         onReorderItems={handleReorderQueue}
         blocked={panicSession === 'panic'}
       />
+      {showKavitaUpgradeBanner ? (
+        <div className="v2-upgrade-banner" role="region" aria-label="Sawa v2 interface Kavita">
+          <div className="v2-upgrade-banner-copy">
+            <span>Sawa v2</span>
+            <strong>La nouvelle interface Kavita est disponible</strong>
+            <p>Active une interface independante, plus plate, dense et classique.</p>
+          </div>
+          <div className="v2-upgrade-banner-actions">
+            <button type="button" className="primary-button" onClick={handleActivateKavitaClean}>
+              Activer l interface Kavita
+            </button>
+            <button type="button" className="ghost-button" onClick={handleDismissKavitaCleanUpgrade}>
+              Garder Sawa actuel
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {commandPaletteOpen ? (
+        <Suspense fallback={<LazyPanelPlaceholder label="Chargement de la palette locale..." />}>
+          <CommandPalette
+            open={commandPaletteOpen}
+            query={commandPaletteQuery}
+            commands={commandPaletteCommands}
+            onQueryChange={setCommandPaletteQuery}
+            onClose={() => {
+              setCommandPaletteOpen(false);
+              setCommandPaletteQuery('');
+            }}
+            onRun={handleRunCommand}
+          />
+        </Suspense>
+      ) : null}
+      <AddEntryMenu
+        open={!!addEntryMenuAnchor}
+        anchor={addEntryMenuAnchor}
+        showWebSources={webSourcesEnabled}
+        onClose={closeAddEntryMenu}
+        onAddCategories={handleOpenAddCategories}
+        onOpenWebSources={handleOpenWebSources}
+      />
       <div className={`layout-shell ${ui.sidebarCollapsed ? 'layout-shell-sidebar-collapsed' : ''}`}>
         <Sidebar
           collapsed={ui.sidebarCollapsed}
@@ -2322,18 +3891,23 @@ export default function App() {
           allCategories={library.categories}
           selectedCategoryId={selectedCategoryId}
           onSelectCategory={handleSelectCategory}
-          onAddCategories={handleOpenAddCategories}
+          onAddCategories={handleAddEntry}
           onToggleCategoryHidden={handleToggleCategoryHidden}
           onRemoveCategory={handleRemoveCategory}
           onOpenSettings={() => setSettingsOpen(true)}
           showHiddenCategories={ui.showHiddenCategories}
-          onContextMenu={openContextMenu}
+          onContextMenu={stableOpenContextMenu}
           favoritesCount={library.favorites?.length ?? 0}
           maintenanceCount={maintenanceCount}
           workbenchCount={workbenchQueueMangas.length}
           vaultCount={visibleVaultCount}
+          showSources={webSourcesEnabled}
+          sidebarSections={sidebarSections}
+          sidebarHiddenSections={sidebarHiddenSections}
           sidebarPins={sidebarPins}
           onActivatePin={handleActivateSidebarPin}
+          onSetSectionVisible={handleSetSidebarSectionVisible}
+          onReorderSections={handleReorderSidebarSections}
         />
 
         <div className="content-shell">
@@ -2348,15 +3922,18 @@ export default function App() {
               selectedCategory={topBarCategory}
               onClearCategory={clearTopBarCategory}
               onOpenSettings={() => setSettingsOpen(true)}
-              onAddCategories={handleOpenAddCategories}
+              onAddCategories={handleAddEntry}
               activeScreen={activeScreen}
               selectionMode={selectionMode}
               selectedCount={selectedMangaIds.length}
-              onToggleSelectionMode={toggleSelectionMode}
+              onToggleSelectionMode={stableToggleSelectionMode}
               searchChips={searchChips}
+              searchStatus={searchStatus}
               searchHelpOpen={searchHelpOpen}
               onToggleSearchHelp={() => setSearchHelpOpen((prev) => !prev)}
               onSaveSearch={handleSaveQueryAsSmartCollection}
+              onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+              commandPaletteLabel={formatShortcutLabel(keyboardShortcuts.openCommandPalette)}
             />
           )}
 
@@ -2382,104 +3959,165 @@ export default function App() {
               favorites={dashboardFavorites}
               persisted={payload?.persisted ?? {}}
               ui={ui}
-              onOpenManga={openMangaInCurrentTab}
-              onResumeManga={resumeMangaInCurrentTab}
-              onToggleFavorite={handleToggleFavorite}
+              onOpenManga={stableOpenManga}
+              onResumeManga={stableResumeManga}
+              onToggleFavorite={stableToggleFavorite}
               onNavigateTo={(target) => {
                 if (target === 'library') {
-                  setActiveScreen('library');
+                  handleScreenChange('library');
                 } else if (target === 'collections') {
-                  setActiveScreen('collections');
+                  handleScreenChange('collections');
                 } else if (target === 'favorites') {
-                  setActiveScreen('favorites');
+                  handleScreenChange('favorites');
                 } else {
-                  setActiveScreen('library');
+                  handleScreenChange('library');
                 }
               }}
-              onContextMenu={openContextMenu}
+              onContextMenu={stableOpenContextMenu}
               onOpenSettings={() => setSettingsOpen(true)}
               onUpdateSettings={handleUpdateSettings}
               onOpenMaintenance={() => handleScreenChange('maintenance')}
               maintenanceCount={maintenanceCount}
               selectionMode={selectionMode}
               selectedMangaIds={selectedMangaIdSet}
-              onToggleSelect={toggleSelectedManga}
-              onSelectionModeChange={toggleSelectionMode}
+              onToggleSelect={stableToggleSelectedManga}
+              onSelectionModeChange={stableToggleSelectionMode}
             />
           )}
 
-          {activeView.screen === 'library' && activeScreen === 'collections' && (
-            <CollectionsView
-              allMangas={library.allMangas}
-              persisted={payload?.persisted ?? {}}
-              onOpenManga={openMangaInCurrentTab}
-              onToggleFavorite={handleToggleFavorite}
-              onCreateCollection={handleCreateCollection}
-              onDeleteCollection={handleDeleteCollection}
-              onUpdateCollection={handleUpdateCollection}
-              onRemoveMangaFromCollection={handleRemoveMangaFromCollection}
-              onSaveSmartCollection={handleSaveSmartCollection}
-              onDeleteSmartCollection={handleDeleteSmartCollection}
-              sidebarPins={sidebarPins}
-              onToggleSidebarPin={handleToggleSidebarPin}
-              requestedCollectionId={requestedCollectionId}
-              requestedTab={requestedCollectionsTab}
-              selectionMode={selectionMode}
-              selectedMangaIds={selectedMangaIdSet}
-              onToggleSelect={toggleSelectedManga}
-              onSelectionModeChange={toggleSelectionMode}
-              onContextMenu={openContextMenu}
-            />
-          )}
+            {activeView.screen === 'library' && activeScreen === 'collections' && (
+              <Suspense fallback={<LazyPanelPlaceholder label="Chargement des collections..." />}>
+                <CollectionsView
+                  allMangas={library.allMangas}
+                  persisted={payload?.persisted ?? {}}
+                  onOpenManga={stableOpenManga}
+                  onToggleFavorite={stableToggleFavorite}
+                  onCreateCollection={handleCreateCollection}
+                  onDeleteCollection={handleDeleteCollection}
+                  onUpdateCollection={handleUpdateCollection}
+                  onRemoveMangaFromCollection={handleRemoveMangaFromCollection}
+                  onSaveSmartCollection={handleSaveSmartCollection}
+                  onDeleteSmartCollection={handleDeleteSmartCollection}
+                  sidebarPins={sidebarPins}
+                  onToggleSidebarPin={handleToggleSidebarPin}
+                  requestedCollectionId={requestedCollectionId}
+                  requestedTab={requestedCollectionsTab}
+                  selectionMode={selectionMode}
+                  selectedMangaIds={selectedMangaIdSet}
+                  onToggleSelect={stableToggleSelectedManga}
+                  onSelectionModeChange={stableToggleSelectionMode}
+                  onContextMenu={stableOpenContextMenu}
+                />
+              </Suspense>
+            )}
 
-          {activeView.screen === 'library' && activeScreen === 'maintenance' && (
-            <MaintenanceView
-              issues={maintenanceIssues}
-              stats={maintenanceStats}
-              workbenchCount={workbenchQueueMangas.length}
-              vaultCount={visibleVaultCount}
-              onOpenManga={openMangaInCurrentTab}
-              onForceRescan={handleForceRescan}
-              onQueueIssue={handleQueueMaintenanceIssue}
-              onPickCover={handlePickCover}
-              onOpenWorkbench={() => handleScreenChange('workbench')}
-              onOpenVault={() => handleScreenChange('vault')}
-            />
-          )}
+            {activeView.screen === 'library' && activeScreen === 'maintenance' && (
+              <Suspense fallback={<LazyPanelPlaceholder label="Chargement de l entretien..." />}>
+                <MaintenanceView
+                  initialScrollTop={activeInitialScrollTop}
+                  scrollKey={activeScrollKey}
+                  onScrollPositionChange={handleViewScrollPositionChange}
+                  issues={maintenanceIssues}
+                  stats={maintenanceStats}
+                  syncStatus={syncStatus}
+                  ocrStatus={ocrStatus}
+                  migrationStatus={migrationStatus}
+                  migrationBusy={migrationBusy}
+                  migrationFeedback={migrationFeedback}
+                  duplicateCandidates={duplicateCandidates}
+                  showOcrSection={true}
+                  showVisualDedupeSection={false}
+                  workbenchCount={workbenchQueueMangas.length}
+                  vaultCount={visibleVaultCount}
+                  onOpenManga={stableOpenManga}
+                  onForceRescan={handleForceRescan}
+                  onRunDeepScan={handleRunDeepScan}
+                  onRebuildDerivedData={handleRebuildDerivedData}
+                  onAnalyzeMigration={handleAnalyzeMigration}
+                  onRunMigration={handleRunMigration}
+                  onCleanupLegacyStorage={handleCleanupLegacyStorage}
+                  onRefreshDuplicateCandidates={handleRefreshDuplicateCandidates}
+                  onEnqueueOcr={handleEnqueueOcr}
+                  onPauseOcr={handlePauseOcr}
+                  onResumeOcr={handleResumeOcr}
+                  onPurgeOcr={handlePurgeOcr}
+                  onQueueIssue={handleQueueMaintenanceIssue}
+                  onPickCover={handlePickCover}
+                  onOpenWorkbench={() => handleScreenChange('workbench')}
+                  onOpenVault={() => handleScreenChange('vault')}
+                />
+              </Suspense>
+            )}
 
-          {activeView.screen === 'library' && activeScreen === 'workbench' && (
-            <MetadataWorkbenchView
-              queueMangas={workbenchQueueMangas}
-              onReplaceQueue={handleReplaceWorkbenchQueue}
-              onImportMatch={handleImportWorkbenchMatch}
-              onPickCover={handlePickCover}
-              onOpenManga={openMangaInCurrentTab}
-            />
-          )}
+            {activeView.screen === 'library' && activeScreen === 'workbench' && (
+              <Suspense fallback={<LazyPanelPlaceholder label="Chargement de l atelier..." />}>
+                <MetadataWorkbenchView
+                  initialScrollTop={activeInitialScrollTop}
+                  scrollKey={activeScrollKey}
+                  onScrollPositionChange={handleViewScrollPositionChange}
+                  queueMangas={workbenchQueueMangas}
+                  onReplaceQueue={handleReplaceWorkbenchQueue}
+                  onImportMatch={handleImportWorkbenchMatch}
+                  onPickCover={handlePickCover}
+                  onOpenManga={stableOpenManga}
+                />
+              </Suspense>
+            )}
 
-          {activeView.screen === 'library' && activeScreen === 'vault' && (
-            <VaultView
-              vault={vaultState}
-              mangas={filteredPrivateMangas}
-              categories={vaultCategories}
-              activeCategoryId={vaultCategoryFilterId}
-              selectionMode={selectionMode}
-              selectedIds={selectedMangaIdSet}
-              onToggleSelectionMode={toggleSelectionMode}
-              onSelectCategory={setVaultCategoryFilterId}
-              onToggleSelect={toggleSelectedManga}
-              onOpenManga={openMangaInCurrentTab}
-              onToggleFavorite={handleToggleFavorite}
-              onContextMenu={openContextMenu}
-              onSetupPin={handleSetVaultPin}
-              onUnlock={handleUnlockVault}
-              onLock={handleLockVault}
-              onToggleBlur={handleToggleVaultBlur}
-              onToggleStealth={handleToggleVaultStealth}
-            />
-          )}
+            {activeView.screen === 'library' && activeScreen === 'sources' && webSourcesEnabled && (
+              <Suspense fallback={<LazyPanelPlaceholder label="Chargement du centre Sources web..." />}>
+                <SourcesView
+                  plugin={webSourcesPlugin}
+                  section={sourcesSection}
+                  categories={visibleCategories}
+                  defaultCategoryId={payload?.persisted?.plugins?.lastSourceImportCategoryId || selectedCategoryId || visibleCategories[0]?.id || ''}
+                  context={sourceExplorerContext}
+                  recentSeries={payload?.sources?.recentSeries ?? []}
+                  linkedSeries={payload?.sources?.linkedSeries ?? []}
+                  initialScrollTop={activeInitialScrollTop}
+                  onSectionChange={setSourcesSection}
+                  onImported={async () => {
+                    try {
+                      await refreshWith(window.mangaAPI.bootstrap());
+                    } finally {
+                      window.mangaAPI.getSyncStatus().then((status) => setSyncStatus(status)).catch(() => {});
+                    }
+                  }}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onScrollPositionChange={handleViewScrollPositionChange}
+                />
+              </Suspense>
+            )}
 
-          {activeView.screen === 'library' && !['dashboard', 'collections', 'maintenance', 'workbench', 'vault'].includes(activeScreen) && (
+            {activeView.screen === 'library' && activeScreen === 'vault' && (
+              <Suspense fallback={<LazyPanelPlaceholder label="Chargement du coffre..." />}>
+                <VaultView
+                  initialScrollTop={activeInitialScrollTop}
+                  scrollKey={activeScrollKey}
+                  onScrollPositionChange={handleViewScrollPositionChange}
+                  vault={vaultState}
+                  mangas={filteredPrivateMangas}
+                  categories={vaultCategories}
+                  activeCategoryId={vaultCategoryFilterId}
+                  selectionMode={selectionMode}
+                  selectedIds={selectedMangaIdSet}
+                  onToggleSelectionMode={stableToggleSelectionMode}
+                  onSelectCategory={setVaultCategoryFilterId}
+                  onToggleSelect={stableToggleSelectedManga}
+                  onOpenManga={stableOpenManga}
+                  onOpenMangaInBackgroundTab={stableOpenMangaInBackgroundTab}
+                  onToggleFavorite={stableToggleFavorite}
+                  onContextMenu={stableOpenContextMenu}
+                  onSetupPin={handleSetVaultPin}
+                  onUnlock={handleUnlockVault}
+                  onLock={handleLockVault}
+                  onToggleBlur={handleToggleVaultBlur}
+                  onToggleStealth={handleToggleVaultStealth}
+                />
+              </Suspense>
+            )}
+
+          {activeView.screen === 'library' && !['dashboard', 'collections', 'maintenance', 'workbench', 'vault', 'sources'].includes(activeScreen) && (
             <LibraryView
               mangas={filteredMangas}
               activeScreen={activeScreen}
@@ -2487,15 +4125,16 @@ export default function App() {
               cardSize={ui.cardSize}
               initialScrollTop={activeInitialScrollTop}
               onScrollPositionChange={handleViewScrollPositionChange}
-              onOpenManga={openMangaInCurrentTab}
-              onOpenMangaInCurrentTab={openMangaInCurrentTab}
-              onOpenMangaInNewTab={openMangaInNewTab}
-              onOpenMangaInBackgroundTab={(mangaId) => openMangaInNewTab(mangaId, { activate: false })}
-              onToggleFavorite={handleToggleFavorite}
-              onContextMenu={openContextMenu}
+              onOpenManga={stableOpenManga}
+              onOpenSourceSeries={handleOpenSourceSeriesForManga}
+              onOpenMangaInCurrentTab={stableOpenManga}
+              onOpenMangaInNewTab={stableOpenMangaInNewTab}
+              onOpenMangaInBackgroundTab={stableOpenMangaInBackgroundTab}
+              onToggleFavorite={stableToggleFavorite}
+              onContextMenu={stableOpenContextMenu}
               selectionMode={selectionMode}
               selectedIds={selectedMangaIdSet}
-              onToggleSelect={toggleSelectedManga}
+              onToggleSelect={stableToggleSelectedManga}
             />
           )}
 
@@ -2512,7 +4151,8 @@ export default function App() {
               onOpenChapterInNewTab={(chapterId) => openChapterInNewTab(currentManga.id, chapterId, 0)}
               onOpenChapterInBackgroundTab={(chapterId) => openChapterInNewTab(currentManga.id, chapterId, 0, { activate: false })}
               onResumeReading={() => resumeMangaInCurrentTab(currentManga.id)}
-              onToggleFavorite={handleToggleFavorite}
+              onOpenSourceSeries={handleOpenSourceSeriesForManga}
+              onToggleFavorite={stableToggleFavorite}
               onPickCover={handlePickCover}
               onOpenMetadataEditor={() => setEditingMetadata(currentManga)}
               onAddTag={() => setTagManagerManga(currentManga)}
@@ -2522,7 +4162,7 @@ export default function App() {
                 if (!annotation?.chapterId) return;
                 replaceActiveView(buildReaderViewForChapter(currentManga.id, annotation.chapterId, annotation.pageIndex ?? 0, true));
               }}
-              onContextMenu={openContextMenu}
+              onContextMenu={stableOpenContextMenu}
             />
           )}
 
@@ -2551,7 +4191,8 @@ export default function App() {
                 chapterId: resolvedChapter.id,
                 pageIndex
               }, [normalizeView(), { screen: 'manga', mangaId: currentChapterData.manga.id }, { screen: 'preview', mangaId: currentChapterData.manga.id, chapterId: resolvedChapter.id, pageIndex: 0 }], { activate: false })}
-              onContextMenu={openContextMenu}
+              onOpenSourceSeries={handleOpenSourceSeriesForManga}
+              onContextMenu={stableOpenContextMenu}
             />
           )}
 
@@ -2561,6 +4202,7 @@ export default function App() {
               chapter={resolvedChapter}
               chapters={currentChapterData.manga.chapters ?? []}
               annotations={payload?.persisted?.annotations?.[currentChapterData.manga.id] ?? []}
+              experimentalFeatures={ui.experimental ?? {}}
               focusToken={activeTab.id}
               initialPageIndex={activeView.pageIndex}
               initialReaderState={sanitizeReaderState(activeView.readerState) || sanitizeReaderState(resolvedChapter.progress)}
@@ -2573,7 +4215,7 @@ export default function App() {
               onUpdateProgress={handleUpdateProgress}
               onAddAnnotation={handleAddAnnotation}
               onDeleteAnnotation={handleDeleteAnnotation}
-              onContextMenu={openContextMenu}
+              onContextMenu={stableOpenContextMenu}
             />
           )}
 
@@ -2624,17 +4266,53 @@ export default function App() {
         />
       )}
 
-      <SettingsDrawer
-        open={settingsOpen}
-        ui={ui}
-        vault={vaultState}
-        onClose={() => setSettingsOpen(false)}
-        onChange={handleUpdateSettings}
-        onPickBackground={handlePickBackgroundImage}
-        onRemoveBackground={handleRemoveBackgroundImage}
-        onUpdateVaultPrefs={async (patch) => refreshWith(window.mangaAPI.updateVaultPrefs(patch))}
-        onLockVault={handleLockVault}
-        onPanicLock={triggerPanicLock}
+      {settingsOpen ? (
+        <Suspense fallback={<LazyPanelPlaceholder label="Chargement des reglages..." />}>
+          <SettingsDrawer
+            open={settingsOpen}
+            ui={ui}
+            vault={vaultState}
+            syncStatus={syncStatus}
+            onClose={() => setSettingsOpen(false)}
+            onChange={handleUpdateSettings}
+            onRequestInterfaceMode={handleRequestInterfaceMode}
+            onPickBackground={handlePickBackgroundImage}
+            onRemoveBackground={handleRemoveBackgroundImage}
+            onClearCache={handleClearCache}
+            onForceRescan={handleForceRescan}
+            onRunDeepScan={handleRunDeepScan}
+            onRebuildDerivedData={handleRebuildDerivedData}
+            onUpdateVaultPrefs={handleUpdateVaultPrefs}
+            onLockVault={handleLockVault}
+            onPanicLock={triggerPanicLock}
+            plugins={plugins}
+            pluginBusyId={pluginBusyId}
+            pluginFeedback={pluginFeedback}
+            sidebarSections={sidebarSections}
+            sidebarHiddenSections={sidebarHiddenSections}
+            showSources={webSourcesEnabled}
+            onSetPluginEnabled={handleSetPluginEnabled}
+            onInstallPlugin={handleInstallPlugin}
+            onUninstallPlugin={handleUninstallPlugin}
+            onOpenPlugin={handleOpenPlugin}
+          />
+        </Suspense>
+      ) : null}
+
+      <TextPromptModal
+        open={textPromptState.open}
+        title={textPromptState.title}
+        description={textPromptState.description}
+        label={textPromptState.label}
+        defaultValue={textPromptState.defaultValue}
+        placeholder={textPromptState.placeholder}
+        confirmLabel={textPromptState.confirmLabel}
+        cancelLabel={textPromptState.cancelLabel}
+        onCancel={closeTextPrompt}
+        onConfirm={async (value) => {
+          await textPromptState.onConfirm?.(value);
+          closeTextPrompt();
+        }}
       />
 
       {editingMetadata && (
@@ -2644,6 +4322,7 @@ export default function App() {
           onSave={handleSaveMetadata}
           onUpdateLocks={handleUpdateMetadataLocks}
           onImportComicInfo={handleImportComicInfoForManga}
+          onExportComicInfo={handleExportComicInfoForManga}
         />
       )}
 
@@ -2693,7 +4372,11 @@ export default function App() {
       )}
 
       <ContextMenu menu={contextMenu} onClose={closeContextMenu} />
-    </div>
+      </div>
+      {interfaceTransitioning ? <div className="interface-transition-veil" aria-hidden="true" /> : null}
+      {interfaceTransitionError ? <div className="interface-transition-error" role="alert">{interfaceTransitionError}</div> : null}
+      </>
+    </ShellErrorBoundary>
   );
 }
 

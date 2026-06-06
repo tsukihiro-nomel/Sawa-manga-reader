@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef } from 'react';
-import { ChevronLeftIcon, PlusIcon } from './Icons.jsx';
+import { ChevronLeftIcon, LayersIcon, PlusIcon } from './Icons.jsx';
 import MediaAsset from './MediaAsset.jsx';
 
 function restoreScrollPosition(element, value) {
@@ -61,7 +61,18 @@ function middleMouseUp(event, callback) {
   callback();
 }
 
-function ChapterPreviewView({ manga, chapter, initialScrollTop = 0, onScrollPositionChange, onBack, onReadFrom, onReadFromNewTab, onReadFromBackgroundTab, onContextMenu }) {
+function ChapterPreviewView({
+  manga,
+  chapter,
+  initialScrollTop = 0,
+  onScrollPositionChange,
+  onBack,
+  onReadFrom,
+  onReadFromNewTab,
+  onReadFromBackgroundTab,
+  onOpenSourceSeries,
+  onContextMenu
+}) {
   const containerRef = useRef(null);
   const isLoadingPages = !Array.isArray(chapter.pages);
 
@@ -82,8 +93,25 @@ function ChapterPreviewView({ manga, chapter, initialScrollTop = 0, onScrollPosi
         <div className="detail-actions-row">
           <button className="primary-button" onClick={() => onReadFrom(0)} disabled={isLoadingPages}>Lire depuis le début</button>
           <button className="ghost-button" onClick={() => onReadFromNewTab(0)} disabled={isLoadingPages}><PlusIcon size={16} /> Nouvel onglet</button>
+          {manga.sourceWeb?.linked ? (
+            <button className="ghost-button" onClick={() => onOpenSourceSeries?.(manga)}>
+              <LayersIcon size={14} /> Voir les chapitres web
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {manga.sourceWeb?.linked ? (
+        <div className="preview-source-web-banner">
+          <div className="preview-source-web-copy">
+            <strong>Source web</strong>
+            <span>{manga.sourceWeb.sourceLabel || 'Serie liee'} · {manga.sourceWeb.statusLabel || 'Reprise disponible'}</span>
+          </div>
+          <button className="ghost-button" onClick={() => onOpenSourceSeries?.(manga)}>
+            <LayersIcon size={14} /> Voir les chapitres web
+          </button>
+        </div>
+      ) : null}
 
       {isLoadingPages ? (
         <div className="empty-card">

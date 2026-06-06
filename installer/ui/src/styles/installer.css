@@ -1,0 +1,499 @@
+/* =========================================================
+   Sawa Manga Library · Midnight Ember NSIS Installer
+   Palette tokens, typography, shared installer-window chrome.
+   ========================================================= */
+
+:root{
+  /* Character palette */
+  --navy-deep:        #0E1424;   /* primary — containers, base */
+  --navy-raise:       #141B30;   /* raised surfaces */
+  --navy-high:        #1B2340;   /* highest surface */
+  --steel-blue:       #3A4A6A;   /* secondary, plis, texte secondaire */
+  --ember-orange:     #C86430;   /* accent / CTA / lignes */
+  --ember-hot:        #E07A42;   /* hover for ember */
+  --gold-soft:        #D2A665;   /* metal / highlights */
+  --gold-ui:          #F4D06F;   /* UI highlights */
+  --turquoise:        #4A8B95;   /* glow / lined info */
+  --indigo-deep:      #40449B;   /* brand server */
+  --night-blue:       #0455B8;   /* accent links */
+  --lavender:         #B39DDB;   /* soft tag */
+  --mint:             #A8E6CF;   /* positive / success */
+
+  /* Neutres */
+  --black-pure:       #0D0D0D;
+  --graphite:         #1A1A1A;
+  --night-grey:       #2B2D42;
+  --steel-mid:        #8C9AAF;   /* muted text */
+  --sand:             #DCC4A3;
+  --silver-cool:      #F2F5FA;
+
+  /* Hair */
+  --hair-base:        #0E0C0F;
+  --hair-warm:        #1C1518;
+
+  /* Semantic */
+  --bg-app:           var(--navy-deep);
+  --bg-panel:         var(--navy-raise);
+  --bg-field:         #0A0F1C;
+  --bg-field-focus:   #0C1222;
+  --border-soft:      rgba(140,154,175,0.18);
+  --border-strong:    rgba(140,154,175,0.32);
+  --border-ember:     rgba(200,100,48,0.55);
+  --text-primary:     var(--silver-cool);
+  --text-secondary:   #B6C0D3;
+  --text-muted:       var(--steel-mid);
+  --text-on-ember:    #0E0A08;
+
+  /* Shadows */
+  --shadow-win:       0 30px 80px rgba(0,0,0,.55), 0 10px 30px rgba(0,0,0,.35);
+  --shadow-pop:       0 18px 50px rgba(0,0,0,.45), 0 4px 16px rgba(0,0,0,.25);
+
+  /* Type */
+  --ff-title: 'Bodoni Moda', 'Didot', 'Times New Roman', serif;
+  --ff-body:  'Quicksand', 'Segoe UI', system-ui, sans-serif;
+  --ff-mono:  'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+}
+
+/* reset + host */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;font-family:var(--ff-body);color:var(--text-primary);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{background:#0a0d17;min-height:100vh}
+
+/* ---------- Installer window chrome (fixed NSIS-ish dimensions) ---------- */
+
+.nsis-window{
+  width:640px;
+  height:480px;
+  background:var(--bg-app);
+  border-radius:8px;
+  box-shadow:var(--shadow-win);
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  position:relative;
+  color:var(--text-primary);
+  font-size:13px;
+  border:1px solid rgba(255,255,255,0.04);
+}
+
+/* titlebar ------------------------------------------------------------- */
+.nsis-titlebar{
+  height:30px;
+  background:linear-gradient(180deg, #0A1020 0%, #060A14 100%);
+  border-bottom:1px solid rgba(0,0,0,.55);
+  display:flex;
+  align-items:center;
+  padding:0 10px;
+  gap:8px;
+  flex-shrink:0;
+  user-select:none;
+  -webkit-app-region:drag;
+}
+.nsis-titlebar .dot{
+  width:11px;height:11px;border-radius:2px;
+  background:#2a3247;
+  position:relative;
+}
+.nsis-titlebar .nsis-title{
+  font-family:var(--ff-title);
+  font-size:12.5px;
+  letter-spacing:.02em;
+  color:var(--text-secondary);
+  font-weight:500;
+  font-style:italic;
+}
+.nsis-titlebar .nsis-title .accent{color:var(--gold-soft);font-style:normal;font-weight:600;letter-spacing:.04em}
+.nsis-titlebar .win-controls{margin-left:auto;display:flex;gap:0;-webkit-app-region:no-drag}
+.nsis-titlebar .win-btn{
+  width:38px;height:30px;display:grid;place-items:center;
+  color:#8893a8;font-size:10px;cursor:default;
+  transition:background .12s;
+  font-family:var(--ff-mono);
+}
+.nsis-titlebar .win-btn:hover{background:rgba(255,255,255,.06);color:#fff}
+.nsis-titlebar .win-btn.close:hover{background:#c14133;color:#fff}
+
+/* header strip (inner-page header, like NSIS page header) -------------- */
+.nsis-pageheader{
+  display:flex;align-items:center;gap:14px;
+  padding:16px 22px;
+  background:
+    linear-gradient(180deg, rgba(58,74,106,.18) 0%, rgba(14,20,36,0) 100%),
+    var(--navy-raise);
+  border-bottom:1px solid var(--border-soft);
+  flex-shrink:0;
+}
+.nsis-pageheader .ph-text{flex:1;min-width:0}
+.nsis-pageheader .ph-title{
+  font-family:var(--ff-title);
+  font-size:17px;
+  font-weight:600;
+  letter-spacing:.01em;
+  color:var(--silver-cool);
+  line-height:1.15;
+  margin:0 0 3px;
+}
+.nsis-pageheader .ph-sub{
+  font-size:11.5px;
+  color:var(--text-muted);
+  font-weight:500;
+  letter-spacing:.01em;
+}
+.nsis-pageheader .ph-mark{
+  width:48px;height:48px;flex-shrink:0;
+  border-radius:10px;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(210,166,101,.22), transparent 60%),
+    linear-gradient(135deg, var(--navy-deep), #1a2340);
+  border:1px solid var(--border-soft);
+  display:grid;place-items:center;
+  position:relative;
+  overflow:hidden;
+}
+
+/* body ----------------------------------------------------------------- */
+.nsis-body{
+  flex:1;
+  min-height:0;
+  padding:22px 26px;
+  overflow:auto;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.nsis-body.dense{gap:10px;padding-top:20px}
+
+/* left-illustration variant (for welcome / finish) --------------------- */
+.nsis-split{flex:1;display:flex;min-height:0}
+.nsis-split .nsis-illus{
+  width:205px;
+  flex-shrink:0;
+  position:relative;
+  overflow:hidden;
+  background:
+    radial-gradient(120% 70% at 20% 0%, rgba(74,139,149,.22), transparent 60%),
+    radial-gradient(90% 60% at 80% 100%, rgba(200,100,48,.18), transparent 60%),
+    linear-gradient(180deg, #091022 0%, #050812 100%);
+  border-right:1px solid rgba(0,0,0,.45);
+}
+.nsis-split .nsis-illus::after{
+  content:"";position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);
+  background-size: 14px 14px;
+  opacity:.9;
+  mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+}
+.nsis-split .nsis-body{flex:1;min-width:0}
+
+/* footer --------------------------------------------------------------- */
+.nsis-footer{
+  flex-shrink:0;
+  border-top:1px solid var(--border-soft);
+  background:linear-gradient(180deg, rgba(14,20,36,0) 0%, rgba(8,12,24,.6) 100%);
+  padding:10px 18px 12px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.nsis-footer .footer-meta{
+  font-size:10.5px;
+  color:var(--text-muted);
+  letter-spacing:.04em;
+  font-family:var(--ff-mono);
+  text-transform:uppercase;
+}
+.nsis-footer .footer-actions{margin-left:auto;display:flex;gap:8px}
+
+/* ---------- buttons --------------------------------------------------- */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-width:82px;
+  height:30px;
+  padding:0 16px;
+  border-radius:4px;
+  border:1px solid var(--border-strong);
+  background:linear-gradient(180deg, #1b2340, #131a2e);
+  color:var(--text-primary);
+  font-family:var(--ff-body);
+  font-size:12px;
+  font-weight:600;
+  letter-spacing:.02em;
+  cursor:pointer;
+  transition:all .12s ease;
+  user-select:none;
+}
+.btn:hover:not(:disabled){border-color:var(--steel-blue);background:linear-gradient(180deg, #222c4f, #19223d)}
+.btn:active:not(:disabled){transform:translateY(0.5px)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.primary{
+  background:linear-gradient(180deg, var(--ember-hot), var(--ember-orange));
+  border-color:#a9521f;
+  color:var(--text-on-ember);
+  box-shadow:0 1px 0 rgba(255,255,255,.12) inset, 0 6px 18px rgba(200,100,48,.28);
+}
+.btn.primary:hover:not(:disabled){
+  filter:brightness(1.06);
+  box-shadow:0 1px 0 rgba(255,255,255,.15) inset, 0 8px 22px rgba(200,100,48,.42);
+}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--text-muted)}
+.btn.ghost:hover:not(:disabled){background:rgba(255,255,255,.04);color:var(--text-secondary)}
+.btn.danger{
+  background:linear-gradient(180deg, #b03a34, #8a2a25);
+  border-color:#6e2420;color:#fff;
+}
+
+/* ---------- form primitives ------------------------------------------ */
+.field{
+  display:flex;flex-direction:column;gap:6px;
+}
+.field > label{
+  font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-muted);
+}
+.input{
+  display:flex;align-items:center;gap:0;
+  background:var(--bg-field);
+  border:1px solid var(--border-soft);
+  border-radius:4px;
+  height:32px;
+  transition:border-color .12s, background .12s;
+}
+.input:focus-within{border-color:var(--ember-orange);background:var(--bg-field-focus)}
+.input input{
+  flex:1;min-width:0;
+  background:transparent;border:none;outline:none;
+  padding:0 12px;height:100%;
+  color:var(--text-primary);
+  font-family:var(--ff-mono);
+  font-size:12px;
+  letter-spacing:.01em;
+}
+.input .adorn{
+  padding:0 10px;color:var(--text-muted);font-family:var(--ff-mono);
+  border-left:1px solid var(--border-soft);
+  height:100%;display:grid;place-items:center;font-size:11px;cursor:pointer;
+  transition:color .12s, background .12s;
+}
+.input .adorn:hover{color:var(--gold-soft);background:rgba(210,166,101,.06)}
+
+/* checkboxes / radios - minimal, Midnight Ember */
+.check{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:7px 8px;
+  border-radius:4px;
+  cursor:pointer;
+  transition:background .12s;
+}
+.check:hover{background:rgba(255,255,255,.03)}
+.check .box{
+  width:14px;height:14px;flex-shrink:0;margin-top:2px;
+  border:1px solid var(--border-strong);
+  border-radius:3px;
+  background:var(--bg-field);
+  position:relative;
+  transition:all .15s;
+}
+.check.on .box{
+  background:var(--ember-orange);
+  border-color:var(--ember-orange);
+  box-shadow:0 0 0 2px rgba(200,100,48,.14);
+}
+.check.on .box::after{
+  content:"";position:absolute;
+  left:3px;top:0px;width:5px;height:9px;
+  border:solid var(--text-on-ember);
+  border-width:0 2px 2px 0;
+  transform:rotate(45deg);
+}
+.check.dis{opacity:.5;cursor:default}
+.check.dis:hover{background:transparent}
+.check.radio .box{border-radius:50%}
+.check.radio.on .box{background:var(--navy-deep)}
+.check.radio.on .box::after{
+  content:"";position:absolute;inset:2.5px;border-radius:50%;
+  background:var(--ember-orange);border:none;transform:none;
+}
+.check .txt{flex:1;min-width:0}
+.check .txt .t{font-size:12.5px;color:var(--text-primary);font-weight:500;line-height:1.3}
+.check .txt .d{font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.4}
+
+/* ---------- progress bar --------------------------------------------- */
+.progress{
+  height:8px;
+  background:var(--bg-field);
+  border:1px solid var(--border-soft);
+  border-radius:6px;
+  overflow:hidden;
+  position:relative;
+}
+.progress .bar{
+  height:100%;
+  background:linear-gradient(90deg, var(--ember-orange) 0%, var(--gold-soft) 100%);
+  border-radius:5px;
+  box-shadow:0 0 16px rgba(200,100,48,.4);
+  position:relative;
+  transition:width .4s cubic-bezier(.2,.7,.3,1);
+}
+.progress .bar::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent);
+  animation:shimmer 1.8s infinite;
+}
+@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.progress.done .bar{background:linear-gradient(90deg, var(--mint), var(--turquoise))}
+.progress.done .bar::after{display:none}
+
+/* ---------- log console ---------------------------------------------- */
+.console{
+  flex:1;
+  min-height:0;
+  background:#060913;
+  border:1px solid var(--border-soft);
+  border-radius:5px;
+  font-family:var(--ff-mono);
+  font-size:10.5px;
+  line-height:1.55;
+  padding:10px 12px;
+  overflow:auto;
+  color:#9fadc3;
+}
+.console .row{display:flex;gap:8px}
+.console .row .t{color:var(--text-muted);font-variant-numeric:tabular-nums;flex-shrink:0}
+.console .row .m{flex:1;min-width:0}
+.console .m.ok{color:var(--mint)}
+.console .m.em{color:var(--gold-soft)}
+.console .m.warn{color:var(--ember-orange)}
+.console .m.err{color:#ff7a6a}
+.console .m.mute{color:#5a6782}
+
+/* ---------- step indicator (custom: journal-tab feel) ---------------- */
+.steps{display:flex;gap:2px;padding:0 22px;background:var(--navy-raise);border-bottom:1px solid var(--border-soft);flex-shrink:0}
+.steps .step{
+  font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  padding:10px 12px 9px;color:var(--text-muted);
+  font-weight:600;
+  position:relative;
+  border-bottom:2px solid transparent;
+  font-family:var(--ff-body);
+  font-variant-numeric:tabular-nums;
+}
+.steps .step.active{color:var(--gold-soft);border-bottom-color:var(--ember-orange)}
+.steps .step.done{color:var(--text-secondary)}
+.steps .step.done::before{content:"✓ ";color:var(--mint);margin-right:2px}
+
+/* ---------- cards & notices ------------------------------------------ */
+.card{
+  background:var(--bg-panel);
+  border:1px solid var(--border-soft);
+  border-radius:6px;
+  padding:12px 14px;
+}
+.notice{
+  display:flex;gap:10px;
+  padding:10px 12px;
+  border-radius:5px;
+  border:1px solid;
+  font-size:11.5px;
+  line-height:1.45;
+}
+.notice .icon{width:18px;height:18px;flex-shrink:0;margin-top:1px;font-family:var(--ff-mono);text-align:center;font-weight:700}
+.notice.info{background:rgba(74,139,149,.08);border-color:rgba(74,139,149,.3);color:#b8dde3}
+.notice.info .icon{color:var(--turquoise)}
+.notice.warn{background:rgba(244,208,111,.06);border-color:rgba(244,208,111,.28);color:#ead9a6}
+.notice.warn .icon{color:var(--gold-ui)}
+.notice.danger{background:rgba(192,72,64,.08);border-color:rgba(192,72,64,.35);color:#f0b6b0}
+.notice.danger .icon{color:#e06b5e}
+.notice.ok{background:rgba(168,230,207,.07);border-color:rgba(168,230,207,.28);color:#c9ecd9}
+.notice.ok .icon{color:var(--mint)}
+
+/* ---------- typography micro-classes --------------------------------- */
+.h-serif{font-family:var(--ff-title);font-weight:500}
+.mono{font-family:var(--ff-mono)}
+.muted{color:var(--text-muted)}
+.eyebrow{
+  font-size:10px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--ember-orange);
+  font-family:var(--ff-body);
+}
+.sep{
+  height:1px;background:var(--border-soft);margin:4px 0;
+}
+
+/* decorative rule as in the Discord "carnet" motif */
+.rule-ornament{
+  display:flex;align-items:center;gap:10px;color:var(--text-muted);
+  font-size:10px;letter-spacing:.3em;text-transform:uppercase;
+  font-family:var(--ff-mono);
+}
+.rule-ornament::before,.rule-ornament::after{
+  content:"";flex:1;height:1px;
+  background:linear-gradient(90deg, transparent, var(--border-strong), transparent);
+}
+
+/* modal overlay (for edge-case dialogs) ------------------------------- */
+.modal-host{
+  position:absolute;inset:0;
+  background:rgba(5,8,15,.65);
+  backdrop-filter:blur(2px);
+  display:grid;place-items:center;
+  z-index:10;
+  padding:20px;
+}
+.modal{
+  min-width:380px;max-width:440px;
+  background:var(--bg-panel);
+  border:1px solid var(--border-strong);
+  border-radius:8px;
+  box-shadow:var(--shadow-pop);
+  overflow:hidden;
+}
+.modal .mh{
+  padding:14px 16px;
+  display:flex;gap:12px;align-items:flex-start;
+  border-bottom:1px solid var(--border-soft);
+}
+.modal .mh .dot{
+  width:28px;height:28px;border-radius:50%;
+  display:grid;place-items:center;
+  font-family:var(--ff-mono);font-weight:700;font-size:14px;
+  flex-shrink:0;
+}
+.modal .mh h4{margin:0;font-family:var(--ff-title);font-size:14.5px;font-weight:600;color:var(--silver-cool)}
+.modal .mh p{margin:3px 0 0;font-size:11.5px;color:var(--text-muted);line-height:1.4}
+.modal .mb{padding:14px 16px;font-size:12px;line-height:1.5;color:var(--text-secondary)}
+.modal .mf{padding:10px 14px;background:rgba(0,0,0,.2);display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--border-soft)}
+
+/* little starry sparkle used across illustrations */
+.sparkle{
+  position:absolute;width:2px;height:2px;border-radius:50%;
+  background:var(--gold-soft);box-shadow:0 0 6px var(--gold-soft);
+}
+
+/* installer "mark" (the cat-ear / notebook monogram substitute) ------- */
+.monogram{
+  font-family:var(--ff-title);
+  font-size:22px;font-weight:600;font-style:italic;
+  color:var(--gold-soft);
+  letter-spacing:.02em;
+  line-height:1;
+  text-shadow:0 0 14px rgba(210,166,101,.35);
+}
+.monogram .sub{
+  display:block;font-family:var(--ff-mono);font-size:7px;font-style:normal;
+  color:var(--text-muted);letter-spacing:.3em;margin-top:2px;text-align:center;
+}
+
+/* scrollbars inside installer body */
+.nsis-body::-webkit-scrollbar,.console::-webkit-scrollbar{width:8px;height:8px}
+.nsis-body::-webkit-scrollbar-thumb,.console::-webkit-scrollbar-thumb{background:rgba(140,154,175,.2);border-radius:4px}
+.nsis-body::-webkit-scrollbar-thumb:hover,.console::-webkit-scrollbar-thumb:hover{background:rgba(140,154,175,.35)}
+
+/* host page (centers the installer in viewport during dev) */
+html, body, #root { height: 100%; }
+#root {
+  display: grid;
+  place-items: center;
+  background: #0a0d17;
+}
