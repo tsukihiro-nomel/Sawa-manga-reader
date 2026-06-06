@@ -301,11 +301,13 @@ function findComicInfoSidecarCandidates(sourcePath) {
     const stats = fs.statSync(sourcePath);
     if (stats.isDirectory()) {
       candidates.push(path.join(sourcePath, 'ComicInfo.xml'));
+      candidates.push(path.join(path.dirname(sourcePath), 'ComicInfo.xml'));
     } else {
       const directory = path.dirname(sourcePath);
       const baseName = path.basename(sourcePath, path.extname(sourcePath));
       candidates.push(path.join(directory, 'ComicInfo.xml'));
       candidates.push(path.join(directory, `${baseName}.ComicInfo.xml`));
+      candidates.push(path.join(path.dirname(directory), 'ComicInfo.xml'));
     }
   } catch (_error) {
     return [];
@@ -360,6 +362,9 @@ async function createCbzAssetResponse(cbzPath, entryName) {
 const EOCD_SIG = 0x06054b50;
 const CD_SIG = 0x02014b50;
 const LOCAL_SIG = 0x04034b50;
+const ZIP_EOCD_MIN_BYTES = 22;
+const ZIP_EOCD_MAX_SEARCH_BYTES = 22 + 65535;
+const cbzInspectionCache = new Map();
 
 function parseZipCentralDirectory(buffer) {
   let eocdOffset = -1;
@@ -403,19 +408,110 @@ function readZipEntryDataSync(buffer, entry) {
   throw new Error(`Unsupported compression method: ${entry.compressionMethod}`);
 }
 
+function readAtSync(fd, length, position) {
+  const buffer = Buffer.allocUnsafe(Math.max(0, length));
+  let offset = 0;
+  while (offset < buffer.length) {
+    const read = fs.readSync(fd, buffer, offset, buffer.length - offset, position + offset);
+    if (read <= 0) break;
+    offset += read;
+  }
+  return offset === buffer.length ? buffer : buffer.subarray(0, offset);
+}
+
+function readZipCentralDirectorySync(cbzPath) {
+  const stats = fs.statSync(cbzPath);
+  const fileSize = Number(stats.size || 0);
+  if (fileSize < ZIP_EOCD_MIN_BYTES) return [];
+
+  const fd = fs.openSync(cbzPath, 'r');
+  try {
+    const tailSize = Math.min(fileSize, ZIP_EOCD_MAX_SEARCH_BYTES);
+    const tailOffset = fileSize - tailSize;
+    const tail = readAtSync(fd, tailSize, tailOffset);
+    let eocdOffset = -1;
+    for (let i = tail.length - ZIP_EOCD_MIN_BYTES; i >= 0; i -= 1) {
+      if (tail.readUInt32LE(i) === EOCD_SIG) {
+        eocdOffset = i;
+        break;
+      }
+    }
+    if (eocdOffset < 0) return [];
+
+    const entryCount = tail.readUInt16LE(eocdOffset + 10);
+    const cdSize = tail.readUInt32LE(eocdOffset + 12);
+    const cdOffset = tail.readUInt32LE(eocdOffset + 16);
+    if (cdOffset < 0 || cdSize <= 0 || cdOffset + cdSize > fileSize) return [];
+
+    const centralDirectory = readAtSync(fd, cdSize, cdOffset);
+    const entries = [];
+    let offset = 0;
+    for (let i = 0; i < entryCount && offset + 46 <= centralDirectory.length; i += 1) {
+      if (centralDirectory.readUInt32LE(offset) !== CD_SIG) break;
+      const compressionMethod = centralDirectory.readUInt16LE(offset + 10);
+      const compressedSize = centralDirectory.readUInt32LE(offset + 20);
+      const uncompressedSize = centralDirectory.readUInt32LE(offset + 24);
+      const fileNameLength = centralDirectory.readUInt16LE(offset + 28);
+      const extraFieldLength = centralDirectory.readUInt16LE(offset + 30);
+      const commentLength = centralDirectory.readUInt16LE(offset + 32);
+      const localHeaderOffset = centralDirectory.readUInt32LE(offset + 42);
+      const nameStart = offset + 46;
+      const nameEnd = nameStart + fileNameLength;
+      if (nameEnd > centralDirectory.length) break;
+      const fileName = centralDirectory.toString('utf-8', nameStart, nameEnd);
+      entries.push({ fileName, compressionMethod, compressedSize, uncompressedSize, localHeaderOffset });
+      offset += 46 + fileNameLength + extraFieldLength + commentLength;
+    }
+    return entries;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function inspectCbzSync(cbzPath) {
+  const versionToken = getArchiveVersionToken(cbzPath);
+  const cached = cbzInspectionCache.get(cbzPath);
+  if (cached?.versionToken === versionToken) return cached.catalog;
+
+  const entries = readZipCentralDirectorySync(cbzPath)
+    .filter((entry) => !/\/$/.test(entry.fileName || ''))
+    .map((entry) => ({
+      ...entry,
+      fileName: normalizeEntryName(entry.fileName)
+    }));
+  const imageEntries = entries
+    .filter((entry) => isImageEntry(entry.fileName))
+    .sort((a, b) => naturalCompare(a.fileName, b.fileName));
+  const comicInfoEntry = entries.find((entry) => (
+    COMIC_INFO_NAMES.has(path.basename(String(entry.fileName || '')).toLowerCase())
+  )) || null;
+  const catalog = { entries, imageEntries, comicInfoEntry };
+  cbzInspectionCache.set(cbzPath, { versionToken, catalog });
+  return catalog;
+}
+
+function readZipEntryDataFromFileSync(cbzPath, entry) {
+  const fd = fs.openSync(cbzPath, 'r');
+  try {
+    const header = readAtSync(fd, 30, entry.localHeaderOffset);
+    if (header.length < 30 || header.readUInt32LE(0) !== LOCAL_SIG) {
+      throw new Error('Invalid local file header');
+    }
+    const localFileNameLength = header.readUInt16LE(26);
+    const localExtraLength = header.readUInt16LE(28);
+    const dataOffset = entry.localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+    const compressedData = readAtSync(fd, entry.compressedSize, dataOffset);
+    if (entry.compressionMethod === 0) return compressedData;
+    if (entry.compressionMethod === 8) return zlib.inflateRawSync(compressedData);
+    throw new Error(`Unsupported compression method: ${entry.compressionMethod}`);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function listCbzImageEntriesSync(cbzPath) {
   try {
-    const buffer = fs.readFileSync(cbzPath);
-    const entries = parseZipCentralDirectory(buffer);
-    return entries
-      .filter((entry) => !/\/$/.test(entry.fileName || ''))
-      .map((entry) => ({
-        fileName: normalizeEntryName(entry.fileName),
-        uncompressedSize: entry.uncompressedSize,
-        compressedSize: entry.compressedSize
-      }))
-      .filter((entry) => isImageEntry(entry.fileName))
-      .sort((a, b) => naturalCompare(a.fileName, b.fileName))
+    return inspectCbzSync(cbzPath).imageEntries
       .map((entry) => entry.fileName);
   } catch (_) {
     return [];
@@ -424,11 +520,9 @@ function listCbzImageEntriesSync(cbzPath) {
 
 function extractComicInfoFromCbzSync(cbzPath) {
   try {
-    const buffer = fs.readFileSync(cbzPath);
-    const entries = parseZipCentralDirectory(buffer);
-    const match = entries.find((entry) => COMIC_INFO_NAMES.has(path.basename(String(entry.fileName || '')).toLowerCase()));
+    const match = inspectCbzSync(cbzPath).comicInfoEntry;
     if (!match) return null;
-    const xmlBuffer = readZipEntryDataSync(buffer, match);
+    const xmlBuffer = readZipEntryDataFromFileSync(cbzPath, match);
     return parseComicInfoXml(xmlBuffer.toString('utf-8'));
   } catch (_) {
     return null;

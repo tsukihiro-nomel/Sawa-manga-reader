@@ -11,6 +11,7 @@ const {
   listCbzImageEntriesSync,
   loadComicInfoForSourceSync
 } = require('./archive.cjs');
+const { measureSync } = require('./perfDiagnostics.cjs');
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.jfif', '.svg', '.tif', '.tiff'
@@ -105,8 +106,14 @@ function normalizePathKey(targetPath) {
   return process.platform === 'win32' ? String(targetPath || '').toLowerCase() : String(targetPath || '');
 }
 
+function getScanEntries(scanIndex) {
+  if (Array.isArray(scanIndex?.entries)) return scanIndex.entries;
+  if (scanIndex?.entries && typeof scanIndex.entries === 'object') return Object.values(scanIndex.entries);
+  return [];
+}
+
 function buildPreviousScanLookup(persistedState = {}) {
-  const entries = Array.isArray(persistedState?.scanIndex?.entries) ? persistedState.scanIndex.entries : [];
+  const entries = getScanEntries(persistedState?.scanIndex);
   const byPath = new Map();
   const byLegacyId = new Map();
   const byContentId = new Map();
@@ -667,7 +674,7 @@ function getChapterPages(chapterPath, persistedState = {}) {
   return scanPageFilePaths(chapterPath).map((pagePath, index) => makeImagePage(pagePath, index, chapterId));
 }
 
-function scanLibrary(persistedState) {
+function scanLibraryInner(persistedState) {
   const previousScan = buildPreviousScanLookup(persistedState);
   const scanEntries = [];
 
@@ -735,6 +742,12 @@ function scanLibrary(persistedState) {
       entries: scanEntries.filter(Boolean)
     }
   };
+}
+
+function scanLibrary(persistedState) {
+  return measureSync('library.scan', () => scanLibraryInner(persistedState), {
+    categoryCount: Array.isArray(persistedState?.categories) ? persistedState.categories.length : 0
+  });
 }
 
 function buildCompactIndex(library) {

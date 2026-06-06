@@ -95,6 +95,7 @@ function LibraryView({
   scrollKey,
   onScrollPositionChange,
   onOpenManga,
+  onOpenSourceSeries,
   onOpenMangaInBackgroundTab,
   onToggleFavorite,
   onContextMenu,
@@ -142,6 +143,10 @@ function LibraryView({
   useLayoutEffect(() => {
     const element = containerRef.current;
     if (!element || !initialScrollTop) return undefined;
+    // La bibliotheque ne doit jamais rester decalee horizontalement.
+    if (element.scrollLeft !== 0) {
+      element.scrollLeft = 0;
+    }
     restoredRef.current = false;
     savingBlockedRef.current = true;
     virtualizer.scrollToOffset(initialScrollTop, { align: 'start' });
@@ -173,7 +178,12 @@ function LibraryView({
   const handleScroll = useCallback(() => {
     if (savingBlockedRef.current) return;
     const element = containerRef.current;
-    if (element) onScrollPositionChange?.(element.scrollTop);
+    if (element) {
+      if (element.scrollLeft !== 0) {
+        element.scrollLeft = 0;
+      }
+      onScrollPositionChange?.(element.scrollTop);
+    }
   }, [onScrollPositionChange]);
 
   useEffect(() => () => {
@@ -214,6 +224,7 @@ function LibraryView({
                   key={manga.id}
                   manga={manga}
                   onOpen={onOpenManga}
+                  onOpenSourceSeries={onOpenSourceSeries}
                   onOpenBackground={onOpenMangaInBackgroundTab}
                   onToggleFavorite={onToggleFavorite}
                   onContextMenu={onContextMenu}

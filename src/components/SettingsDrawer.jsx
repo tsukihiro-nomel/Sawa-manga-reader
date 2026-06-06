@@ -1,5 +1,20 @@
 ﻿import { useState } from 'react';
-import { MoonIcon, SparklesIcon, SunIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon, ImageIcon, TrashIcon, ArchiveIcon, EyeOffIcon, LockIcon } from './Icons.jsx';
+import { MoonIcon, SparklesIcon, SunIcon, BookIcon, KeyboardIcon, HardDriveIcon, DownloadIcon, UploadIcon, RefreshIcon, ImageIcon, TrashIcon, ArchiveIcon, EyeOffIcon, LockIcon } from './Icons.jsx';
+
+const INTERFACES = [
+  {
+    id: 'kavita',
+    icon: BookIcon,
+    title: 'Kavita',
+    description: 'Interface independante, plate et dense, avec navigation classique.'
+  },
+  {
+    id: 'sawa',
+    icon: SparklesIcon,
+    title: 'Sawa',
+    description: 'Interface historique riche avec ses effets et ses panneaux visuels.'
+  }
+];
 
 const THEMES = [
   { id: 'dark-night', icon: MoonIcon, title: 'Dark Night', description: 'Noir profond, contraste premium et lumiere maitrisee.' },
@@ -18,8 +33,40 @@ const DEFAULT_SHORTCUTS = {
   zoomIn: { label: 'Zoom +', keys: ['+'] },
   zoomOut: { label: 'Zoom -', keys: ['-'] },
   zoomReset: { label: 'Zoom 100%', keys: ['0'] },
-  exitReader: { label: 'Quitter la lecture', keys: ['Escape'] }
+  exitReader: { label: 'Quitter la lecture', keys: ['Escape'] },
+  openCommandPalette: { label: 'Palette locale', keys: ['Ctrl', 'K'] },
+  toggleReadingQueue: { label: 'Queue de lecture', keys: ['Ctrl', 'Shift', 'Q'] },
+  newTab: { label: 'Nouvel onglet', keys: ['Ctrl', 'T'] },
+  closeTab: { label: 'Fermer l onglet', keys: ['Ctrl', 'W'] },
+  goBack: { label: 'Retour navigateur', keys: ['Alt', 'ArrowLeft'] },
+  openSettings: { label: 'Ouvrir les parametres', keys: ['Ctrl', ','] },
+  openSources: { label: 'Ouvrir Sources web', keys: ['Ctrl', 'Shift', 'S'] },
+  toggleSidebar: { label: 'Replier la barre laterale', keys: ['Ctrl', 'B'] },
+  panicLock: { label: 'Verrou panique', keys: ['Ctrl', 'Shift', 'L'] },
+  nextTab: { label: 'Onglet suivant', keys: ['Ctrl', 'Tab'] },
+  prevTab: { label: 'Onglet precedent', keys: ['Ctrl', 'Shift', 'Tab'] }
 };
+
+const SIDEBAR_SECTION_OPTIONS = [
+  { id: 'dashboard', label: 'Dashboard', description: 'Vue accueil et apercus.' },
+  { id: 'library', label: 'Bibliotheque', description: 'Point d entree principal.', required: true },
+  { id: 'collections', label: 'Collections', description: 'Collections manuelles et smart.' },
+  { id: 'maintenance', label: 'Entretien', description: 'Scan, OCR, dedup et maintenance.' },
+  { id: 'workbench', label: 'Atelier', description: 'File de metadata et traitement.' },
+  { id: 'sources', label: 'Sources web', description: 'Recherche et import communautaires.', addon: 'sources' },
+  { id: 'vault', label: 'Coffre', description: 'Titres prives et verrouilles.' },
+  { id: 'favorites', label: 'Favoris', description: 'Titres epingles.' },
+  { id: 'recents', label: 'Recents', description: 'Dernieres lectures.' }
+];
+
+function normalizeShortcutKeys(value, fallback = []) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || '').trim()).filter(Boolean);
+  }
+  const normalized = String(value || '').trim();
+  if (!normalized) return fallback;
+  return normalized.split('+').map((entry) => entry.trim()).filter(Boolean);
+}
 
 function ColorField({ label, value, onChange, helper }) {
   const safeColor = /^#[0-9a-fA-F]{6}$/.test(value || '') ? value : '#8b5cf6';
@@ -37,7 +84,7 @@ function ColorField({ label, value, onChange, helper }) {
 
 function ShortcutRow({ id, shortcut, customKeys, onRecord }) {
   const [recording, setRecording] = useState(false);
-  const displayKeys = customKeys || shortcut.keys;
+  const displayKeys = normalizeShortcutKeys(customKeys, shortcut.keys);
 
   function startRecording() {
     setRecording(true);
@@ -85,18 +132,41 @@ export default function SettingsDrawer({
   open,
   ui,
   vault,
+  syncStatus,
+  plugins = [],
+  pluginBusyId = null,
+  pluginFeedback = '',
+  sidebarSections = [],
+  sidebarHiddenSections = {},
+  showSources = false,
   onClose,
   onChange,
+  onRequestInterfaceMode,
   onPickBackground,
   onRemoveBackground,
+  onClearCache,
+  onForceRescan,
+  onRunDeepScan,
+  onRebuildDerivedData,
   onUpdateVaultPrefs,
+  onSetPluginEnabled,
+  onInstallPlugin,
+  onUninstallPlugin,
+  onOpenPlugin,
   onLockVault,
   onPanicLock
 }) {
-  const shortcuts = ui.shortcuts || {};
+  const shortcuts = ui.keyboardShortcuts || {};
   const vaultConfigured = Boolean(vault?.configured);
   const vaultLocked = Boolean(vault?.locked);
-
+  const experimental = ui.experimental || {};
+  const availableSidebarSections = SIDEBAR_SECTION_OPTIONS.filter((section) => showSources || section.id !== 'sources');
+  const hiddenSidebarSections = sidebarHiddenSections && typeof sidebarHiddenSections === 'object' ? sidebarHiddenSections : {};
+  const visibleSidebarSections = (
+    Array.isArray(sidebarSections) && sidebarSections.length > 0
+      ? sidebarSections.filter((sectionId) => availableSidebarSections.some((section) => section.id === sectionId) && !hiddenSidebarSections[sectionId])
+      : availableSidebarSections.map((section) => section.id)
+  );
   async function handleExportSawa() {
     try {
       await window.mangaAPI.exportBackup();
@@ -114,12 +184,39 @@ export default function SettingsDrawer({
   }
 
   function handleRecordShortcut(id, keys) {
-    const updated = { ...shortcuts, [id]: keys };
-    onChange({ shortcuts: updated });
+    const updated = { ...shortcuts, [id]: keys.join('+') };
+    onChange({ keyboardShortcuts: updated });
   }
 
   function handleResetShortcuts() {
-    onChange({ shortcuts: {} });
+    onChange({ keyboardShortcuts: {} });
+  }
+
+  function handleToggleSidebarSection(sectionId, enabled) {
+    const definition = availableSidebarSections.find((section) => section.id === sectionId);
+    if (!definition || definition.required) return;
+    const nextHidden = { ...hiddenSidebarSections };
+    if (enabled) {
+      delete nextHidden[sectionId];
+    } else {
+      nextHidden[sectionId] = true;
+    }
+    const nextSections = Array.isArray(sidebarSections) && sidebarSections.includes(sectionId)
+      ? sidebarSections
+      : [...visibleSidebarSections, sectionId];
+    onChange({
+      sidebarSections: nextSections,
+      sidebarHiddenSections: nextHidden
+    });
+  }
+
+  function handleExperimentalPatch(patch) {
+    onChange({
+      experimental: {
+        ...experimental,
+        ...patch
+      }
+    });
   }
 
   return (
@@ -135,14 +232,41 @@ export default function SettingsDrawer({
 
         <div className="settings-section">
           <div className="settings-section-heading">
+            <h4>Interface</h4>
+            <span>Change toute la structure de navigation sans modifier les couleurs.</span>
+          </div>
+          <div className="theme-grid">
+            {INTERFACES.map((entry) => {
+              const Icon = entry.icon;
+              const active = ui.interfaceMode === entry.id;
+              return (
+                <button
+                  key={entry.id}
+                  className={`theme-card ${active ? 'theme-card-active' : ''}`}
+                  onClick={() => onRequestInterfaceMode?.(entry.id)}
+                >
+                  <div className="theme-card-topline">
+                    <span className="theme-card-icon"><Icon size={16} /></span>
+                    <strong>{entry.title}</strong>
+                  </div>
+                  <p>{entry.description}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-heading">
             <h4>Ambiance visuelle</h4>
             <span>Choisis le theme global de l'app.</span>
           </div>
           <div className="theme-grid">
             {THEMES.map((t) => {
               const Icon = t.icon;
+              const active = ui.theme === t.id;
               return (
-                <button key={t.id} className={`theme-card ${ui.theme === t.id ? 'theme-card-active' : ''}`} onClick={() => onChange({ theme: t.id })}>
+                <button key={t.id} className={`theme-card ${active ? 'theme-card-active' : ''}`} onClick={() => onChange({ theme: t.id })}>
                   <div className="theme-card-topline">
                     <span className="theme-card-icon"><Icon size={16} /></span>
                     <strong>{t.title}</strong>
@@ -298,7 +422,7 @@ export default function SettingsDrawer({
         <div className="settings-section settings-grid-two">
           <section className="settings-card-block">
             <div className="settings-section-heading">
-              <h4><ArchiveIcon size={16} /> Coffre & Privacy</h4>
+              <h4><ArchiveIcon size={16} /> Coffre & confidentialite</h4>
               <span>Pilote rapidement les options de confidentialite.</span>
             </div>
             <label className="settings-toggle">
@@ -324,7 +448,7 @@ export default function SettingsDrawer({
                 <LockIcon size={16} /> Reverrouiller le coffre
               </button>
               <button className="ghost-button ghost-button-danger" disabled={!vaultConfigured || vaultLocked || !onPanicLock} onClick={() => onPanicLock?.()}>
-                <EyeOffIcon size={16} /> Panic lock
+                <EyeOffIcon size={16} /> Verrou panique
               </button>
             </div>
             <div className="settings-note">
@@ -342,13 +466,43 @@ export default function SettingsDrawer({
             <div className="settings-note">Queue de lecture: ouvre/ferme avec Ctrl+Shift+Q depuis la barre d onglets.</div>
             <div className="settings-note">Recherche avancee: utilise `tag:`, `status:`, `private:`, `author:` et `chapters&gt;`.</div>
             <div className="settings-note">Les filtres reconnus restent visibles en chips dans la barre de recherche.</div>
+            <div className="settings-note">Palette locale: `Ctrl+K` pour aller a la maintenance, la queue, les collections ou relancer une action.</div>
           </section>
         </div>
 
         <div className="settings-section">
           <div className="settings-section-heading">
+            <h4>Barre laterale</h4>
+            <span>Masque les vues ici, puis reordonne-les directement depuis le petit bouton d edition dans la barre laterale.</span>
+          </div>
+          <div className="settings-sidebar-list">
+            {availableSidebarSections.map((section) => {
+              const visible = visibleSidebarSections.includes(section.id);
+              return (
+                <div key={section.id} className="settings-sidebar-row">
+                  <label className="settings-toggle settings-toggle-rich">
+                    <div className="settings-toggle-copy">
+                      <strong>{section.label}</strong>
+                      <small>{section.description}</small>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={visible}
+                      disabled={section.required}
+                      onChange={(event) => handleToggleSidebarSection(section.id, event.target.checked)}
+                    />
+                  </label>
+                  <div className="settings-sidebar-state">{visible ? 'Visible' : 'Masque'}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-heading">
             <h4><KeyboardIcon size={16} /> Raccourcis clavier</h4>
-            <span>Personnalise les raccourcis du lecteur.</span>
+            <span>Personnalise les raccourcis du lecteur et de la navigation globale.</span>
           </div>
           <div className="shortcuts-list">
             {Object.entries(DEFAULT_SHORTCUTS).map(([id, shortcut]) => (
@@ -412,6 +566,118 @@ export default function SettingsDrawer({
 
         <div className="settings-section">
           <div className="settings-section-heading">
+            <h4>Fonctions avancees</h4>
+            <span>Les fonctions v4 stables sont integrees directement, sans ajouter de friction au quotidien.</span>
+          </div>
+          <div className="settings-grid-two">
+            <section className="settings-card-block">
+              <div className="settings-note">
+                Recherche avancee locale: active. Elle utilise l'index derive tout en gardant la barre de recherche actuelle.
+              </div>
+              <div className="settings-note">Formats archives etendus: actifs via le pipeline standard de scan/analyse.</div>
+            </section>
+
+            <section className="settings-card-block">
+              <div className="settings-note">OCR local: disponible dans Entretien, lance uniquement a la demande.</div>
+              <div className="settings-note">Lecteur visuel v4, guide manuel et dedup visuelle restent retires pour garder l'app fluide et stable.</div>
+            </section>
+          </div>
+
+          <div className="settings-subsection">
+            <h5>Profil de respiration des jobs</h5>
+            <div className="segmented-control segmented-control-full">
+              <button className={experimental.schedulerProfile === 'interactive' ? 'active' : ''} onClick={() => handleExperimentalPatch({ schedulerProfile: 'interactive' })}>Interactif</button>
+              <button className={experimental.schedulerProfile === 'balanced' ? 'active' : ''} onClick={() => handleExperimentalPatch({ schedulerProfile: 'balanced' })}>Equilibre</button>
+              <button className={experimental.schedulerProfile === 'idle-only' ? 'active' : ''} onClick={() => handleExperimentalPatch({ schedulerProfile: 'idle-only' })}>Repos seul</button>
+            </div>
+            <div className="settings-note">
+              {syncStatus?.label
+                ? `Etat actuel: ${syncStatus.label}${syncStatus.detail ? ` · ${syncStatus.detail}` : ''}`
+                : 'Le scheduler garde un statut compact: a jour, mise a jour ou attention.'}
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-heading">
+            <h4>Plugins et addons</h4>
+            <span>Installe, active et gere les addons sans quitter Sawa.</span>
+          </div>
+          <div className="plugin-preview-list">
+            {plugins.length === 0 ? (
+              <div className="settings-note">Aucun plugin detecte pour le moment.</div>
+            ) : plugins.map((plugin) => {
+              const installed = Boolean(plugin.installed);
+              const busy = pluginBusyId === plugin.id;
+              const canInstall = Boolean(plugin.installable) && !installed;
+              const canOpen = installed && (plugin.id === 'sources-web' || (Boolean(plugin.launchable) && !plugin.integrated));
+              const canUninstall = installed && Boolean(plugin.uninstallable);
+              const kindLabel = plugin.kind === 'source-addon' ? 'addon source' : 'addon';
+              return (
+                <div key={plugin.id} className="plugin-preview-row">
+                  <div>
+                    <strong>{plugin.name}</strong>
+                    <div className="settings-note">{plugin.description || 'Addon local.'}</div>
+                    <div className="settings-note">
+                      Statut: {installed ? 'installe' : (plugin.status || 'disponible')} · Type: {kindLabel} · Origine: {plugin.origin || 'local'}
+                    </div>
+                    {plugin.runtimeKind ? (
+                      <div className="settings-note">
+                        Runtime: {plugin.runtimeKind}
+                        {plugin.runtimeVersion ? ` · ${plugin.runtimeVersion}` : ''}
+                        {plugin.runtimeBundled ? ' · integre' : ''}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="plugin-preview-controls">
+                    <div className="plugin-preview-actions">
+                      {canInstall ? (
+                        <button
+                          className="ghost-button"
+                          disabled={busy || !onInstallPlugin}
+                          onClick={() => onInstallPlugin?.(plugin.id)}
+                        >
+                          {busy ? 'Installation...' : 'Installer'}
+                        </button>
+                      ) : null}
+                      {canOpen ? (
+                        <button
+                          className="ghost-button"
+                          disabled={busy || !onOpenPlugin}
+                          onClick={() => onOpenPlugin?.(plugin.id)}
+                        >
+                          {busy ? 'Ouverture...' : (plugin.id === 'sources-web' ? 'Ouvrir' : 'Lancer')}
+                        </button>
+                      ) : null}
+                      {canUninstall ? (
+                        <button
+                          className="ghost-button ghost-button-danger"
+                          disabled={busy || !onUninstallPlugin}
+                          onClick={() => onUninstallPlugin?.(plugin.id)}
+                        >
+                          {busy ? 'Retrait...' : 'Retirer'}
+                        </button>
+                      ) : null}
+                    </div>
+                    <label className="plugin-preview-enable">
+                      <span>{plugin.integrated ? 'Activer' : 'Actif'}</span>
+                      <input
+                        type="checkbox"
+                        checked={!!plugin.enabled}
+                        disabled={!installed || busy || !onSetPluginEnabled}
+                        onChange={(event) => onSetPluginEnabled?.(plugin.id, event.target.checked)}
+                      />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {pluginFeedback ? <div className="settings-note plugin-preview-feedback">{pluginFeedback}</div> : null}
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-heading">
             <h4><HardDriveIcon size={16} /> Donnees & Sauvegarde</h4>
             <span>Exporte ou importe tes donnees au format .sawa pour les transferer entre appareils.</span>
           </div>
@@ -436,19 +702,26 @@ export default function SettingsDrawer({
             <span>Outils de gestion et de diagnostic.</span>
           </div>
           <div className="settings-grid-two">
-            <button className="ghost-button" onClick={() => onChange({ forceRescan: true })}>
+            <button className="ghost-button" onClick={onForceRescan}>
               <RefreshIcon size={16} /> Rescan complet
             </button>
-            <button className="ghost-button" onClick={() => onChange({ clearCache: true })}>
+            <button className="ghost-button" onClick={onRunDeepScan}>
+              <RefreshIcon size={16} /> Scan profond
+            </button>
+            <button className="ghost-button" onClick={onRebuildDerivedData}>
+              <HardDriveIcon size={16} /> Reconstruire les donnees derivees
+            </button>
+            <button className="ghost-button" onClick={onClearCache}>
               <HardDriveIcon size={16} /> Vider le cache
             </button>
           </div>
+          {syncStatus?.detail ? <div className="settings-note">{syncStatus.detail}</div> : null}
         </div>
 
         <div className="settings-section">
           <div className="settings-section-heading"><h4>A propos</h4></div>
           <div className="settings-note">
-            <strong>Sawa Manga Library v3.0.0</strong><br />
+            <strong>Sawa Manga Library v4.0.0</strong><br />
             Bibliotheque manga locale, premium, intelligente et entierement hors ligne.
           </div>
         </div>

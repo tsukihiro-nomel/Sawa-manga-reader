@@ -1,0 +1,10 @@
+;!@Install@!UTF-8!
+Title="Sawa Manga Library — Setup"
+BeginPrompt="Préparation de l'installateur de Sawa Manga Library v4.0.0…"
+RunProgram="installer-ui.exe"
+GUIFlags="64+8"
+GUIMode="2"
+ExtractPathText="Extraction temporaire"
+Shortcut="Du,{installer-ui.exe},,,Sawa Manga Library Setup,,"
+Delete=1
+;!@InstallEnd@!

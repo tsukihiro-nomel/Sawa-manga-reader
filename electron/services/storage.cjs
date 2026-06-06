@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { app } = require('electron');
 
@@ -7,8 +8,81 @@ const STATE_VERSION = 3;
 const SCAN_INDEX_VERSION = 1;
 const QUEUE_VERSION = 1;
 const METADATA_VERSION = 1;
+const SPLIT_STORAGE_VERSION = 1;
 const MAX_WORKSPACES = 8;
 const WORKSPACE_ICON_KEYS = ['home', 'library', 'layout', 'scroll', 'heart', 'sparkles', 'layers', 'book'];
+const ROOT_STATE_FILE = 'state.json';
+const LEGACY_V2_STATE_FILE = 'sawa-manga-state-v2.json';
+const LEGACY_V1_STATE_FILE = 'sawa-manga-state.json';
+const USER_DATA_DIRNAME = 'user-data';
+const DERIVED_DIRNAME = 'derived';
+const CACHE_DIRNAME = 'cache';
+const USER_DATA_FILES = {
+  metadata: 'metadata.json',
+  organization: 'organization.json',
+  reader: 'reader.json',
+  identity: 'identity.json'
+};
+
+const ROOT_STATE_KEYS = [
+  'version',
+  'stateVersion',
+  'scanIndexVersion',
+  'queueVersion',
+  'metadataVersion',
+  'splitStorageVersion',
+  'categories',
+  'scanIndex',
+  'session',
+  'ui',
+  'vault',
+  'pdfMeta',
+  'backupHistory',
+  'migrationLog'
+];
+
+const USER_DATA_KEY_GROUPS = {
+  metadata: ['metadata', 'metadataLocks', 'metadataFieldSource'],
+  organization: ['favorites', 'tags', 'mangaTags', 'mangaTagMeta', 'collections', 'smartCollections', 'annotations', 'metadataWorkbenchQueue', 'readingQueue', 'plugins'],
+  reader: ['readingStates', 'chapterStates', 'readStatus', 'chapterReadStatus', 'progress', 'recents', 'readerPrefs'],
+  identity: ['knownChapterCounts', 'identityAliases']
+};
+
+const DEFAULT_SIDEBAR_SECTIONS = [
+  'dashboard',
+  'library',
+  'collections',
+  'maintenance',
+  'workbench',
+  'sources',
+  'vault',
+  'favorites',
+  'recents'
+];
+
+const DEFAULT_KEYBOARD_SHORTCUTS = {
+  nextPage: 'ArrowRight',
+  prevPage: 'ArrowLeft',
+  nextChapter: 'Ctrl+ArrowRight',
+  prevChapter: 'Ctrl+ArrowLeft',
+  toggleFullscreen: 'F',
+  toggleUI: 'H',
+  zoomIn: '+',
+  zoomOut: '-',
+  zoomReset: '0',
+  exitReader: 'Escape',
+  openCommandPalette: 'Ctrl+K',
+  toggleReadingQueue: 'Ctrl+Shift+Q',
+  newTab: 'Ctrl+T',
+  closeTab: 'Ctrl+W',
+  goBack: 'Alt+ArrowLeft',
+  openSettings: 'Ctrl+,',
+  openSources: 'Ctrl+Shift+S',
+  toggleSidebar: 'Ctrl+B',
+  panicLock: 'Ctrl+Shift+L',
+  nextTab: 'Ctrl+Tab',
+  prevTab: 'Ctrl+Shift+Tab'
+};
 
 const DEFAULT_STATE = {
   version: STORAGE_VERSION,
@@ -16,6 +90,7 @@ const DEFAULT_STATE = {
   scanIndexVersion: SCAN_INDEX_VERSION,
   queueVersion: QUEUE_VERSION,
   metadataVersion: METADATA_VERSION,
+  splitStorageVersion: SPLIT_STORAGE_VERSION,
   categories: [],
   scanIndex: {
     updatedAt: null,
@@ -24,6 +99,8 @@ const DEFAULT_STATE = {
   session: { version: 2, activeWorkspaceId: null, workspaces: [] },
   ui: {
     theme: 'dark-night',
+    interfaceMode: 'kavita',
+    kavitaUpgradePromptSeen: false,
     selectedCategoryId: null,
     showHiddenCategories: false,
     sidebarCollapsed: false,
@@ -35,6 +112,18 @@ const DEFAULT_STATE = {
     readerMode: 'single',
     readerFit: 'fit-width',
     readerZoom: 1,
+    kavitaReaderSettings: {
+      mode: 'single',
+      fitMode: 'fit-height',
+      zoom: 1,
+      brightness: 100,
+      widthOverride: 0,
+      splitDirection: 'none',
+      pageOffset: false,
+      swipeEnabled: true,
+      emulateBook: false,
+      autoClose: true
+    },
     readerDoublePageMode: 'manga-jp',
     autoMarkReadThreshold: 95,
     continuousReading: true,
@@ -42,18 +131,25 @@ const DEFAULT_STATE = {
     activeScreen: 'dashboard',
     dashboardLayout: [],
     dashboardHiddenSections: {},
+    sidebarSections: [...DEFAULT_SIDEBAR_SECTIONS],
+    sidebarHiddenSections: {},
     sidebarPins: [],
     maintenancePrefs: {
       mutedIssueTypes: [],
       lastOpenedAt: null
     },
+    experimental: {
+      visualReader: false,
+      guidedView: false,
+      advancedSearch: true,
+      archiveFormats: true,
+      ocr: true,
+      visualDedupe: false,
+      pluginPreview: true,
+      schedulerProfile: 'balanced'
+    },
     filters: { readStatus: 'all', favoriteOnly: false, hasDescription: null, hasCustomCover: null, tags: [], collections: [] },
-    keyboardShortcuts: {
-      nextPage: 'ArrowRight', prevPage: 'ArrowLeft',
-      nextChapter: 'Ctrl+ArrowRight', prevChapter: 'Ctrl+ArrowLeft',
-      toggleFullscreen: 'f', toggleUI: 'h',
-      zoomIn: '+', zoomOut: '-', zoomReset: '0', exitReader: 'Escape'
-    }
+    keyboardShortcuts: { ...DEFAULT_KEYBOARD_SHORTCUTS }
   },
   metadata: {},
   metadataLocks: {},
@@ -78,6 +174,10 @@ const DEFAULT_STATE = {
   annotations: {},
   metadataWorkbenchQueue: [],
   readingQueue: [],
+  plugins: {
+    enabled: {},
+    dismissedWarnings: {}
+  },
   vault: {
     pinHash: null,
     pinProtectedBlob: null,
@@ -97,6 +197,7 @@ const DEFAULT_STATE = {
   pdfMeta: {},
   recents: [],
   knownChapterCounts: {},
+  identityAliases: {},
   readerPrefs: {},
   backupHistory: [],
   migrationLog: []
@@ -109,17 +210,64 @@ function ensureDir(dirPath) {
 let cachedState = null;
 
 function getUserDataPath() {
-  return app.getPath('userData');
+  if (app && typeof app.getPath === 'function') {
+    return app.getPath('userData');
+  }
+  const overridePath = String(process.env.SAWA_USER_DATA_PATH || '').trim();
+  if (overridePath) {
+    ensureDir(overridePath);
+    return overridePath;
+  }
+  const fallbackPath = path.join(os.tmpdir(), 'sawa-manga-library-cli');
+  ensureDir(fallbackPath);
+  return fallbackPath;
+}
+
+function getStateDir() {
+  const udp = getUserDataPath();
+  ensureDir(udp);
+  return udp;
 }
 
 function getStatePath() {
-  const udp = getUserDataPath();
-  ensureDir(udp);
-  return path.join(udp, 'sawa-manga-state-v2.json');
+  return path.join(getStateDir(), ROOT_STATE_FILE);
+}
+
+function getLegacyV2StatePath() {
+  return path.join(getStateDir(), LEGACY_V2_STATE_FILE);
 }
 
 function getLegacyStatePath() {
-  return path.join(getUserDataPath(), 'sawa-manga-state.json');
+  return path.join(getStateDir(), LEGACY_V1_STATE_FILE);
+}
+
+function getUserDataStoreDir() {
+  const dirPath = path.join(getStateDir(), USER_DATA_DIRNAME);
+  ensureDir(dirPath);
+  return dirPath;
+}
+
+function getUserDataStorePaths() {
+  const dirPath = getUserDataStoreDir();
+  return Object.fromEntries(
+    Object.entries(USER_DATA_FILES).map(([key, fileName]) => [key, path.join(dirPath, fileName)])
+  );
+}
+
+function getDerivedDir() {
+  const dirPath = path.join(getStateDir(), DERIVED_DIRNAME);
+  ensureDir(dirPath);
+  return dirPath;
+}
+
+function getDerivedDbPath() {
+  return path.join(getDerivedDir(), 'library.db');
+}
+
+function getCacheDir() {
+  const dirPath = path.join(getStateDir(), CACHE_DIRNAME);
+  ensureDir(dirPath);
+  return dirPath;
 }
 
 function getBackupDir() {
@@ -129,13 +277,13 @@ function getBackupDir() {
 }
 
 function getThumbnailDir() {
-  const dirPath = path.join(getUserDataPath(), 'thumbnails');
+  const dirPath = path.join(getCacheDir(), 'thumbnails');
   ensureDir(dirPath);
   return dirPath;
 }
 
 function getCbzCacheDir() {
-  const dirPath = path.join(getUserDataPath(), 'cbz-cache');
+  const dirPath = path.join(getCacheDir(), 'cbz');
   ensureDir(dirPath);
   return dirPath;
 }
@@ -350,17 +498,21 @@ function normalizeMetadataFieldMap(map) {
 }
 
 function normalizeScanIndex(scanIndex) {
+  const sourceEntries = Array.isArray(scanIndex?.entries)
+    ? scanIndex.entries
+    : (scanIndex?.entries && typeof scanIndex.entries === 'object' ? Object.values(scanIndex.entries) : []);
   const entries = {};
-  const sourceEntries = scanIndex?.entries && typeof scanIndex.entries === 'object' ? scanIndex.entries : {};
-  for (const [entryId, value] of Object.entries(sourceEntries)) {
+  for (const value of sourceEntries) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
     const pathValue = String(value.path || '').trim();
-    const locationId = String(value.locationId || entryId || '').trim();
+    const locationId = String(value.locationId || value.id || value.path || '').trim();
     if (!pathValue || !locationId) continue;
     entries[locationId] = {
       locationId,
       path: pathValue,
-      kind: String(value.kind || '').trim() || 'item',
+      kind: String(value.kind || value.type || '').trim() || 'item',
+      type: String(value.type || value.kind || '').trim() || 'item',
+      legacyId: String(value.legacyId || '').trim() || null,
       contentId: String(value.contentId || '').trim() || null,
       containerType: String(value.containerType || '').trim() || null,
       sourceType: String(value.sourceType || '').trim() || null,
@@ -416,6 +568,37 @@ function normalizeState(state) {
   normalized.annotations = normalized.annotations && typeof normalized.annotations === 'object' ? normalized.annotations : {};
   normalized.metadataWorkbenchQueue = uniqueStrings(normalized.metadataWorkbenchQueue);
   normalized.ui = normalized.ui && typeof normalized.ui === 'object' ? normalized.ui : {};
+  const requestedTheme = String(normalized.ui.theme || DEFAULT_STATE.ui.theme).trim() || DEFAULT_STATE.ui.theme;
+  const requestedInterfaceMode = String(normalized.ui.interfaceMode || '').trim();
+  const migratingLegacyKavita = requestedTheme === 'kavita-clean' || requestedInterfaceMode === 'kavita-clean';
+  normalized.ui.theme = migratingLegacyKavita ? 'dark-night' : requestedTheme;
+  normalized.ui.interfaceMode = migratingLegacyKavita || requestedInterfaceMode === 'kavita'
+    ? 'kavita'
+    : 'sawa';
+  const allowedSidebarSections = new Set(DEFAULT_SIDEBAR_SECTIONS);
+  const rawSidebarSections = Array.isArray(normalized.ui.sidebarSections)
+    ? normalized.ui.sidebarSections
+    : [];
+  const nextSidebarSections = uniqueStrings(rawSidebarSections)
+    .filter((sectionId) => allowedSidebarSections.has(sectionId));
+  normalized.ui.sidebarSections = nextSidebarSections.length > 0
+    ? [
+        ...nextSidebarSections,
+        ...DEFAULT_SIDEBAR_SECTIONS.filter((sectionId) => !nextSidebarSections.includes(sectionId))
+      ]
+    : [...DEFAULT_SIDEBAR_SECTIONS];
+  if (!normalized.ui.sidebarSections.includes('library')) {
+    normalized.ui.sidebarSections.unshift('library');
+  }
+  const rawSidebarHiddenSections = normalized.ui.sidebarHiddenSections && typeof normalized.ui.sidebarHiddenSections === 'object'
+    ? normalized.ui.sidebarHiddenSections
+    : {};
+  normalized.ui.sidebarHiddenSections = DEFAULT_SIDEBAR_SECTIONS.reduce((accumulator, sectionId) => {
+    if (sectionId !== 'library' && rawSidebarHiddenSections[sectionId]) {
+      accumulator[sectionId] = true;
+    }
+    return accumulator;
+  }, {});
   normalized.ui.sidebarPins = Array.isArray(normalized.ui.sidebarPins)
     ? normalized.ui.sidebarPins
       .map((pin, index) => {
@@ -439,6 +622,32 @@ function normalizeState(state) {
         mutedIssueTypes: uniqueStrings(normalized.ui.maintenancePrefs.mutedIssueTypes)
       }
     : structuredClone(DEFAULT_STATE.ui.maintenancePrefs);
+  const rawKeyboardShortcuts = normalized.ui.keyboardShortcuts && typeof normalized.ui.keyboardShortcuts === 'object'
+    ? normalized.ui.keyboardShortcuts
+    : (normalized.ui.shortcuts && typeof normalized.ui.shortcuts === 'object' ? normalized.ui.shortcuts : {});
+  normalized.ui.keyboardShortcuts = Object.fromEntries(
+    Object.entries(DEFAULT_KEYBOARD_SHORTCUTS).map(([shortcutId, fallbackValue]) => {
+      const rawValue = rawKeyboardShortcuts[shortcutId];
+      if (Array.isArray(rawValue)) {
+        const joined = rawValue
+          .map((entry) => String(entry || '').trim())
+          .filter(Boolean)
+          .join('+');
+        return [shortcutId, joined || fallbackValue];
+      }
+      const normalizedValue = String(rawValue || '').trim();
+      return [shortcutId, normalizedValue || fallbackValue];
+    })
+  );
+  normalized.ui.experimental = normalized.ui.experimental && typeof normalized.ui.experimental === 'object'
+    ? {
+        ...DEFAULT_STATE.ui.experimental,
+        ...normalized.ui.experimental,
+        schedulerProfile: ['interactive', 'balanced', 'idle-only'].includes(String(normalized.ui.experimental.schedulerProfile || '').trim())
+          ? String(normalized.ui.experimental.schedulerProfile).trim()
+          : DEFAULT_STATE.ui.experimental.schedulerProfile
+      }
+    : structuredClone(DEFAULT_STATE.ui.experimental);
   normalized.vault = normalized.vault && typeof normalized.vault === 'object'
     ? { ...DEFAULT_STATE.vault, ...normalized.vault }
     : structuredClone(DEFAULT_STATE.vault);
@@ -455,6 +664,13 @@ function normalizeState(state) {
   normalized.vault.locked = (normalized.vault.pinHash || normalized.vault.pinProtectedBlob)
     ? Boolean(normalized.vault.locked)
     : false;
+  normalized.identityAliases = normalized.identityAliases && typeof normalized.identityAliases === 'object' && !Array.isArray(normalized.identityAliases)
+    ? Object.fromEntries(
+        Object.entries(normalized.identityAliases)
+          .map(([alias, target]) => [String(alias || '').trim(), String(target || '').trim()])
+          .filter(([alias, target]) => alias && target)
+      )
+    : {};
   normalized.smartCollections = Object.fromEntries(
     Object.entries({
       ...DEFAULT_STATE.smartCollections,
@@ -549,6 +765,111 @@ function normalizeState(state) {
   return normalized;
 }
 
+function readJsonFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function pickStateKeys(source, keys = []) {
+  return Object.fromEntries(
+    keys
+      .filter((key) => Object.prototype.hasOwnProperty.call(source || {}, key))
+      .map((key) => [key, source[key]])
+  );
+}
+
+function splitStateForStorage(state) {
+  const normalized = normalizeState(state);
+  const rootState = pickStateKeys(normalized, ROOT_STATE_KEYS);
+  const userData = Object.fromEntries(
+    Object.entries(USER_DATA_KEY_GROUPS).map(([group, keys]) => [group, pickStateKeys(normalized, keys)])
+  );
+  return { rootState, userData, normalized };
+}
+
+const WRITE_DEBOUNCE_MS = Number.parseInt(process.env.SAWA_STATE_WRITE_DEBOUNCE_MS || '300', 10);
+let pendingWriteState = null;
+let writeTimer = null;
+
+function writeStateBundleToDisk(normalized) {
+  const rootState = pickStateKeys(normalized, ROOT_STATE_KEYS);
+  const userData = Object.fromEntries(
+    Object.entries(USER_DATA_KEY_GROUPS).map(([group, keys]) => [group, pickStateKeys(normalized, keys)])
+  );
+  const statePath = getStatePath();
+  const storePaths = getUserDataStorePaths();
+  ensureDir(path.dirname(statePath));
+  fs.writeFileSync(statePath, JSON.stringify(rootState, null, 2), 'utf-8');
+  for (const [group, filePath] of Object.entries(storePaths)) {
+    fs.writeFileSync(filePath, JSON.stringify(userData[group] || {}, null, 2), 'utf-8');
+  }
+}
+
+function flushStateWrites() {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  const pending = pendingWriteState;
+  pendingWriteState = null;
+  if (!pending) return false;
+  try {
+    writeStateBundleToDisk(pending);
+    return true;
+  } catch (err) {
+    console.error('[storage] flushStateWrites failed:', err);
+    return false;
+  }
+}
+
+function scheduleStateWrite(normalized) {
+  pendingWriteState = normalized;
+  if (writeTimer) return;
+  // Debounce must not be 0: if someone sets it to 0 we still fall through the timer so writes happen on next tick.
+  const delay = Number.isFinite(WRITE_DEBOUNCE_MS) && WRITE_DEBOUNCE_MS >= 0 ? WRITE_DEBOUNCE_MS : 300;
+  writeTimer = setTimeout(() => {
+    writeTimer = null;
+    const pending = pendingWriteState;
+    pendingWriteState = null;
+    if (!pending) return;
+    try {
+      writeStateBundleToDisk(pending);
+    } catch (err) {
+      console.error('[storage] scheduled state write failed:', err);
+    }
+  }, delay);
+  // Ensure the timer does not keep the event loop alive past normal shutdown.
+  if (typeof writeTimer.unref === 'function') writeTimer.unref();
+}
+
+function writeSplitStateFiles(nextState) {
+  const { normalized } = splitStateForStorage(nextState);
+  cachedState = normalized;
+  scheduleStateWrite(normalized);
+  return normalized;
+}
+
+function loadSplitState() {
+  const statePath = getStatePath();
+  const storePaths = getUserDataStorePaths();
+  const hasRootState = fs.existsSync(statePath);
+  const hasUserData = Object.values(storePaths).some((filePath) => fs.existsSync(filePath));
+  if (!hasRootState && !hasUserData) return null;
+
+  const rootState = readJsonFile(statePath) || {};
+  const merged = { ...rootState };
+  for (const [group, filePath] of Object.entries(storePaths)) {
+    const segment = readJsonFile(filePath);
+    if (!segment || typeof segment !== 'object' || Array.isArray(segment)) continue;
+    Object.assign(merged, pickStateKeys(segment, USER_DATA_KEY_GROUPS[group] || []));
+  }
+  return merged;
+}
+
 function migrateLegacyState(rawState, sourceLabel = 'legacy') {
   const migrated = normalizeState(rawState || {});
   migrated.migrationLog = Array.isArray(migrated.migrationLog) ? migrated.migrationLog : [];
@@ -567,16 +888,30 @@ function migrateFromV1(v1State) {
 
 function loadState() {
   if (cachedState) return cachedState;
-  const statePath = getStatePath();
-  if (fs.existsSync(statePath)) {
+  const splitState = loadSplitState();
+  if (splitState) {
     try {
-      const raw = fs.readFileSync(statePath, 'utf-8');
-      const parsed = JSON.parse(raw);
+      const parsed = splitState;
       if (parsed?.stateVersion === STATE_VERSION) {
         cachedState = normalizeState(parsed);
         return cachedState;
       }
-      const migrated = migrateLegacyState(parsed, 'state-file');
+      const migrated = migrateLegacyState(parsed, 'split-state');
+      saveState(migrated);
+      return migrated;
+    } catch (_error) {
+      // continue to legacy fallback below
+    }
+  }
+
+  const legacyV2Path = getLegacyV2StatePath();
+  if (fs.existsSync(legacyV2Path)) {
+    try {
+      const raw = fs.readFileSync(legacyV2Path, 'utf-8');
+      const parsed = JSON.parse(raw);
+      const backupPath = path.join(getBackupDir(), `v2-auto-backup-${Date.now()}.json`);
+      fs.writeFileSync(backupPath, raw, 'utf-8');
+      const migrated = migrateLegacyState(parsed, 'legacy-v2-path');
       saveState(migrated);
       return migrated;
     } catch (_error) {
@@ -605,12 +940,7 @@ function loadState() {
 }
 
 function saveState(nextState) {
-  const statePath = getStatePath();
-  ensureDir(path.dirname(statePath));
-  const normalizedState = normalizeState(nextState);
-  cachedState = normalizedState;
-  fs.writeFileSync(statePath, JSON.stringify(normalizedState), 'utf-8');
-  return normalizedState;
+  return writeSplitStateFiles(nextState);
 }
 
 function updateState(updater) {
@@ -661,6 +991,8 @@ function importBackup(backupFilePath) {
   createBackup('pre-import-auto');
   const imported = normalizeState(backup.state);
   saveState(imported);
+  // Force the imported state to disk before returning so callers observe a durable result.
+  flushStateWrites();
   return { manifest: backup.manifest, restored: true };
 }
 
@@ -677,6 +1009,28 @@ function listBackups() {
       return { path: fullPath, fileName, manifest: null, size: 0 };
     }
   }).sort((a, b) => (b.manifest?.createdAt || '').localeCompare(a.manifest?.createdAt || ''));
+}
+
+function clearDirectoryContents(dirPath) {
+  if (!dirPath || !fs.existsSync(dirPath)) return;
+  for (const entry of fs.readdirSync(dirPath)) {
+    const fullPath = path.join(dirPath, entry);
+    try {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+    } catch (_error) {
+      // noop
+    }
+  }
+}
+
+function clearDerivedArtifacts() {
+  clearDirectoryContents(getDerivedDir());
+  clearDirectoryContents(getCacheDir());
+  return {
+    derivedDir: getDerivedDir(),
+    cacheDir: getCacheDir(),
+    dbPath: getDerivedDbPath()
+  };
 }
 
 function createTag(name, color = '#8b5cf6') {
@@ -803,14 +1157,26 @@ module.exports = {
   SCAN_INDEX_VERSION,
   QUEUE_VERSION,
   METADATA_VERSION,
+  SPLIT_STORAGE_VERSION,
   DEFAULT_STATE,
+  normalizeState,
   loadState,
   saveState,
   updateState,
+  flushStateWrites,
   getUserDataPath,
+  getStateDir,
+  getStatePath,
+  getLegacyV2StatePath,
+  getUserDataStoreDir,
+  getUserDataStorePaths,
+  getDerivedDir,
+  getDerivedDbPath,
+  getCacheDir,
   getBackupDir,
   getThumbnailDir,
   getCbzCacheDir,
+  clearDerivedArtifacts,
   createBackup,
   importBackup,
   listBackups,

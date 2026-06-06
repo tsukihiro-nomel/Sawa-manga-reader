@@ -2,6 +2,7 @@ import { memo } from 'react';
 import {
   CheckIcon,
   FolderPlusIcon,
+  KeyboardIcon,
   LayersIcon,
   PanelCollapseIcon,
   PanelExpandIcon,
@@ -26,9 +27,12 @@ function TopBar({
   selectedCount = 0,
   onToggleSelectionMode,
   searchChips = [],
+  searchStatus = null,
   searchHelpOpen = false,
   onToggleSearchHelp,
-  onSaveSearch
+  onSaveSearch,
+  onOpenCommandPalette,
+  commandPaletteLabel = 'Ctrl+K'
 }) {
   const title = activeScreen === 'favorites'
     ? 'Favoris'
@@ -78,11 +82,14 @@ function TopBar({
             ) : null}
           </div>
 
-          {searchChips.length ? (
+          {(searchChips.length || searchStatus?.label) ? (
             <div className="search-chip-row">
               {searchChips.map((chip) => (
                 <span key={`${chip.kind}-${chip.raw}`} className={`search-chip search-chip-${chip.kind}`}>{chip.label}</span>
               ))}
+              {searchStatus?.label ? (
+                <span className={`search-chip search-chip-status ${searchStatus.tone || 'neutral'}`}>{searchStatus.label}</span>
+              ) : null}
             </div>
           ) : null}
 
@@ -106,6 +113,13 @@ function TopBar({
           <option value="added-oldest">Ajout ancien</option>
         </select>
 
+        {onOpenCommandPalette ? (
+          <button className="ghost-button topbar-command-button" onClick={onOpenCommandPalette} title="Palette de commandes locale">
+            <KeyboardIcon size={15} />
+            <span>{commandPaletteLabel}</span>
+          </button>
+        ) : null}
+
         {onToggleSelectionMode ? (
           <button className={`ghost-button topbar-select-button ${selectionMode ? 'active' : ''}`} onClick={onToggleSelectionMode} title="Selection multiple">
             {selectionMode ? <CheckIcon size={15} /> : <SparklesIcon size={15} />}
@@ -113,7 +127,7 @@ function TopBar({
           </button>
         ) : null}
 
-        <button className="icon-pill" onClick={onAddCategories} title="Ajouter des categories">
+        <button className="icon-pill" onClick={(event) => onAddCategories?.(event)} title="Ajouter des categories">
           <FolderPlusIcon size={16} />
         </button>
         <button className="icon-pill" onClick={onOpenSettings} title="Parametres">

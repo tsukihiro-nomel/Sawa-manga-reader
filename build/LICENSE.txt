@@ -1,0 +1,27 @@
+Sawa Manga Library — End-User License
+
+Ce logiciel est distribué gratuitement. En l'installant, vous acceptez
+les conditions suivantes :
+
+1. Stockage local.
+   Vos fichiers manga et vos données utilisateur (user-data/*.json)
+   restent locaux. Aucune télémétrie n'est envoyée.
+
+2. Runtime Sources web.
+   Sawa pilote un runtime local compatible Suwayomi/Mihon écoutant sur
+   127.0.0.1. Les dépôts d'extensions tiers ne sont pas livrés par
+   défaut et doivent être ajoutés explicitement.
+
+3. Java.
+   Un JRE 21+ est requis pour Sources web. À défaut, définir
+   SAWA_JAVA_PATH.
+
+4. Contenus importés.
+   Les chapitres importés depuis Sources web deviennent des fichiers
+   locaux de votre bibliothèque et ne sont jamais supprimés par une
+   désactivation ou désinstallation de l'addon.
+
+5. Garantie.
+   Le logiciel est fourni « en l'état », sans garantie d'aucune sorte.
+
+— Version 4.0.0 · Midnight Ember Edition

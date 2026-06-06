@@ -1,0 +1,77 @@
+/* =========================================================
+   Sawa Manga Library installer — @font-face declarations
+   Fonts copied to ../../fonts/ via scripts/copy-design.mjs.
+   ========================================================= */
+
+/* Bodoni Moda — variable, 2 axes (opsz, wght) */
+@font-face {
+  font-family: 'Bodoni Moda';
+  src: url('../../fonts/bodoni-moda/BodoniModa-VariableFont_opsz,wght.ttf') format('truetype-variations');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Bodoni Moda';
+  src: url('../../fonts/bodoni-moda/BodoniModa-Italic-VariableFont_opsz,wght.ttf') format('truetype-variations');
+  font-weight: 400 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* Quicksand — 7 weights (Light, Book, Bold) + matching Italics ("Oblique") */
+@font-face {
+  font-family: 'Quicksand';
+  src: url('../../fonts/quicksand/Quicksand_Light.otf') format('opentype');
+  font-weight: 300; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Quicksand';
+  src: url('../../fonts/quicksand/Quicksand_Light_Oblique.otf') format('opentype');
+  font-weight: 300; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: 'Quicksand';
+  src: url('../../fonts/quicksand/Quicksand_Book.otf') format('opentype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Quicksand';
+  src: url('../../fonts/quicksand/Quicksand_Book_Oblique.otf') format('opentype');
+  font-weight: 400; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: 'Quicksand';
+  src: url('../../fonts/quicksand/Quicksand_Bold.otf') format('opentype');
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Quicksand';
+  src: url('../../fonts/quicksand/Quicksand_Bold_Oblique.otf') format('opentype');
+  font-weight: 700; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: 'Quicksand Dash';
+  src: url('../../fonts/quicksand/Quicksand_Dash.otf') format('opentype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
+/* Starlight Rune — used for decorative rune glyphs */
+@font-face {
+  font-family: 'Starlight Rune';
+  src: url('../../fonts/starlight-rune/StarlightRune-Personal Use.ttf') format('truetype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
+/* JetBrains Mono — supplied by scripts/copy-design.mjs (downloaded
+   separately from the JetBrains CDN; falls back to Consolas if missing) */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../../fonts/jetbrains-mono/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../../fonts/jetbrains-mono/JetBrainsMono-Bold.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+}

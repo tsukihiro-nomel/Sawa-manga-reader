@@ -1,10 +1,11 @@
-import { memo, useCallback, useRef } from 'react';
-import { ArchiveIcon, CheckIcon, HeartIcon } from './Icons.jsx';
+import { memo, useCallback, useEffect, useRef } from 'react';
+import { ArchiveIcon, CheckIcon, HeartIcon, LayersIcon } from './Icons.jsx';
 import MediaAsset from './MediaAsset.jsx';
 
 const MangaCard = memo(function MangaCard({
   manga,
   onOpen,
+  onOpenSourceSeries,
   onOpenBackground,
   onToggleFavorite,
   onContextMenu,
@@ -15,6 +16,8 @@ const MangaCard = memo(function MangaCard({
   privateBlur = false
 }) {
   const cardRef = useRef(null);
+  const pendingPointerRef = useRef(null);
+  const pointerRafRef = useRef(null);
 
   const handleClick = useCallback(() => {
     if (selectionMode) {
@@ -46,29 +49,57 @@ const MangaCard = memo(function MangaCard({
   }, [manga.id, onToggleSelect]);
 
   const handleContext = useCallback((event) => onContextMenu?.(event, { type: 'manga', manga }), [manga, onContextMenu]);
+  const handleOpenSourceSeries = useCallback((event) => {
+    event.stopPropagation();
+    onOpenSourceSeries?.(manga);
+  }, [manga, onOpenSourceSeries]);
 
+  // Pointer events fire at high frequency (often >120 Hz on modern displays). Without coalescing,
+  // every card on screen would run getBoundingClientRect + 4 style writes per event, which is a
+  // heavy cost with 20+ cards visible. Coalesce into a single update per animation frame.
   const handlePointerMove = useCallback((event) => {
     if (compact || selectionMode) return;
-    const node = cardRef.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    const px = (event.clientX - rect.left) / rect.width;
-    const py = (event.clientY - rect.top) / rect.height;
-    const tiltX = (0.5 - py) * 4.2;
-    const tiltY = (px - 0.5) * 4.8;
-    node.style.setProperty('--mc-tilt-x', `${tiltX.toFixed(2)}deg`);
-    node.style.setProperty('--mc-tilt-y', `${tiltY.toFixed(2)}deg`);
-    node.style.setProperty('--mc-shine-x', `${(px * 100).toFixed(1)}%`);
-    node.style.setProperty('--mc-shine-y', `${(py * 100).toFixed(1)}%`);
+    pendingPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+    if (pointerRafRef.current != null) return;
+    pointerRafRef.current = window.requestAnimationFrame(() => {
+      pointerRafRef.current = null;
+      const pending = pendingPointerRef.current;
+      pendingPointerRef.current = null;
+      const node = cardRef.current;
+      if (!pending || !node) return;
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const px = (pending.clientX - rect.left) / rect.width;
+      const py = (pending.clientY - rect.top) / rect.height;
+      const tiltX = (0.5 - py) * 4.2;
+      const tiltY = (px - 0.5) * 4.8;
+      node.style.setProperty('--mc-tilt-x', `${tiltX.toFixed(2)}deg`);
+      node.style.setProperty('--mc-tilt-y', `${tiltY.toFixed(2)}deg`);
+      node.style.setProperty('--mc-shine-x', `${(px * 100).toFixed(1)}%`);
+      node.style.setProperty('--mc-shine-y', `${(py * 100).toFixed(1)}%`);
+    });
   }, [compact, selectionMode]);
 
   const handlePointerLeave = useCallback(() => {
+    if (pointerRafRef.current != null) {
+      window.cancelAnimationFrame(pointerRafRef.current);
+      pointerRafRef.current = null;
+    }
+    pendingPointerRef.current = null;
     const node = cardRef.current;
     if (!node) return;
     node.style.removeProperty('--mc-tilt-x');
     node.style.removeProperty('--mc-tilt-y');
     node.style.removeProperty('--mc-shine-x');
     node.style.removeProperty('--mc-shine-y');
+  }, []);
+
+  useEffect(() => () => {
+    if (pointerRafRef.current != null) {
+      window.cancelAnimationFrame(pointerRafRef.current);
+      pointerRafRef.current = null;
+    }
+    pendingPointerRef.current = null;
   }, []);
 
   const progressPercent = manga.progressPercent ?? 0;
@@ -137,6 +168,7 @@ const MangaCard = memo(function MangaCard({
               </span>
             ) : null}
             {manga.hasNewChapters ? <span className="mc-badge mc-badge-new">Nouveau</span> : null}
+            {manga.sourceWeb?.linked ? <span className="mc-badge mc-badge-source"><LayersIcon size={11} /> Source web</span> : null}
             {manga.isPrivate ? <span className="mc-badge mc-badge-private"><ArchiveIcon size={11} /> Prive</span> : null}
           </div>
 
@@ -177,6 +209,22 @@ const MangaCard = memo(function MangaCard({
             </span>
           ))}
         </div>
+
+        {manga.sourceWeb?.linked && !compact && !selectionMode ? (
+          <div className="mc-source-row">
+            <div className="mc-source-copy">
+              <strong>{manga.sourceWeb.sourceLabel || 'Source web'}</strong>
+              <span>{manga.sourceWeb.statusLabel || 'Reprendre la serie web en un clic.'}</span>
+            </div>
+            <button
+              type="button"
+              className="mc-source-action"
+              onClick={handleOpenSourceSeries}
+            >
+              Voir les chapitres web
+            </button>
+          </div>
+        ) : null}
       </div>
     </article>
   );
