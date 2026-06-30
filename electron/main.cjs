@@ -49,17 +49,25 @@ const {
   makeId,
   buildCompactIndex,
   isPdfFile,
-  isCbzFile
+  isCbzFile,
+  areScanIndexesEquivalent
 } = require('./services/libraryScanner.cjs');
+const { scanLibraryInWorker } = require('./services/libraryScanWorker.cjs');
+const { patchLibrarySnapshotInWorker } = require('./services/derivedSyncWorker.cjs');
 const {
   buildInteractiveLibraryPayload
 } = require('./services/libraryOverlay.cjs');
+const {
+  buildLegacySeriesIndex,
+  queryLegacySeriesIndex
+} = require('./services/legacySeriesIndex.cjs');
 const {
   consumeFirstRunScanMarker,
   writeFirstRunScanMarker
 } = require('./services/firstRunScan.cjs');
 
 const { LibraryWatcher } = require('./services/watcher.cjs');
+const { createThumbnailCache } = require('./services/thumbnailCache.cjs');
 const {
   createCbzAssetResponse,
   clearCbzCache,
@@ -69,7 +77,6 @@ const {
 const {
   getSnapshotMeta,
   syncLibrarySnapshot,
-  patchLibrarySnapshot,
   readLibrarySnapshot,
   listJobs,
   getJob,
@@ -88,6 +95,7 @@ const {
   closeCoreStore
 } = require('./services/coreStore.cjs');
 const { JobOrchestrator } = require('./services/jobOrchestrator.cjs');
+const { installTextContextMenu } = require('./services/textContextMenu.cjs');
 const { buildComicInfoXml, writeComicInfoSidecar } = require('./services/comicInfo.cjs');
 const {
   measureSync,
@@ -222,6 +230,12 @@ let ocrPaused = false;
 let bootstrapRefreshScanTimer = null;
 let bootstrapChapterDetectionTimer = null;
 let interactiveDerivedSyncTimer = null;
+let interactiveDerivedSyncPromise = null;
+let interactiveDerivedSyncQueued = false;
+let libraryScanPromise = null;
+let thumbnailCache = null;
+let legacySeriesIndex = [];
+let legacySeriesIndexReady = false;
 
 let pdfJsModulePromise = null;
 
@@ -229,6 +243,36 @@ function getScanEntries(scanIndex) {
   if (Array.isArray(scanIndex?.entries)) return scanIndex.entries;
   if (scanIndex?.entries && typeof scanIndex.entries === 'object') return Object.values(scanIndex.entries);
   return [];
+}
+
+function requestLibraryScan(persistedState = loadState()) {
+  if (!libraryScanPromise) {
+    libraryScanPromise = scanLibraryInWorker(persistedState, { userDataPath: getUserDataPath() })
+      .finally(() => {
+        libraryScanPromise = null;
+      });
+  }
+  return libraryScanPromise;
+}
+
+function getThumbnailCache() {
+  if (!thumbnailCache) {
+    thumbnailCache = createThumbnailCache({
+      cacheDir: getThumbnailDir(),
+      nativeImageImpl: nativeImage,
+      maxConcurrent: 2
+    });
+  }
+  return thumbnailCache;
+}
+
+async function createThumbnailAssetResponse(sourcePath, url) {
+  if (url.searchParams.get('thumbnail') !== '1') return null;
+  const thumbnailPath = await getThumbnailCache().getOrCreate(sourcePath, {
+    width: url.searchParams.get('w'),
+    height: url.searchParams.get('h')
+  });
+  return thumbnailPath ? net.fetch(pathToFileURL(thumbnailPath).toString()) : null;
 }
 
 function updateSyncStatusPatch(patch = {}) {
@@ -321,8 +365,30 @@ async function resolveMangaVisualSource(manga) {
   return null;
 }
 
-async function runLibraryJob(job) {
-  const payload = buildStatePayload();
+async function runLibraryJob({ job, checkpoint, isCancelled }) {
+  const persistedBeforeScan = loadState();
+  const rawLibrary = await requestLibraryScan(persistedBeforeScan);
+  if (isCancelled()) return;
+
+  const diskChanged = !areScanIndexesEquivalent(persistedBeforeScan.scanIndex, rawLibrary.scanIndex);
+  checkpoint({
+    diskChanged,
+    mangaCount: Number(rawLibrary?.allMangas?.length || 0)
+  });
+  rawLibrarySnapshot = rawLibrary;
+  lastScanTime = Date.now();
+  if (!diskChanged) {
+    updateSyncStatusPatch({
+      lastCompletedKind: job.kind,
+      lastCompletedAt: new Date().toISOString()
+    });
+    return;
+  }
+
+  const payload = buildStatePayload({
+    rawLibrary,
+    skipReconciliation: false
+  });
   detectNewChapters(payload.library);
   updateSyncStatusPatch({
     lastCompletedKind: job.kind,
@@ -332,7 +398,7 @@ async function runLibraryJob(job) {
 }
 
 async function runHashJob({ checkpoint, isCancelled }) {
-  const payload = buildStatePayload();
+  const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
   const mangas = getMergedPayloadMangas(payload);
   const currentHashes = listVisualHashes();
   let processed = 0;
@@ -586,9 +652,9 @@ function requestPdfMetaSync(options = {}) {
     return hasChanges;
   })()
     .catch(() => false)
-    .then((hasChanges) => {
+    .then(async (hasChanges) => {
       if (hasChanges && pdfMetaNeedsRefresh && mainWindow && !mainWindow.isDestroyed()) {
-        const payload = buildStatePayload();
+        const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
         detectNewChapters(payload.library);
         emitLibraryPayload(payload);
       }
@@ -625,6 +691,8 @@ function registerLocalAssetProtocol() {
       if (url.hostname === 'local') {
         const encodedPath = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname;
         const filePath = decodeURIComponent(encodedPath);
+        const thumbnailResponse = await createThumbnailAssetResponse(filePath, url);
+        if (thumbnailResponse) return thumbnailResponse;
         return net.fetch(pathToFileURL(filePath).toString());
       }
 
@@ -634,6 +702,13 @@ function registerLocalAssetProtocol() {
         const entryName = url.searchParams.get('entry');
         if (!archivePath || !entryName) {
           return new Response('Missing CBZ asset parameters', { status: 400 });
+        }
+        if (url.searchParams.get('thumbnail') === '1') {
+          const cachedEntryPath = await ensureCbzEntryCached(archivePath, entryName);
+          if (cachedEntryPath) {
+            const thumbnailResponse = await createThumbnailAssetResponse(cachedEntryPath, url);
+            if (thumbnailResponse) return thumbnailResponse;
+          }
         }
         return createCbzAssetResponse(archivePath, entryName);
       }
@@ -821,6 +896,7 @@ function createWindow() {
 
   Menu.setApplicationMenu(null);
   mainWindow.setMenuBarVisibility(false);
+  installTextContextMenu(mainWindow.webContents, Menu, () => mainWindow);
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -1213,7 +1289,7 @@ function buildStatePayload(options = {}) {
   const usesProvidedLibrary = Boolean(providedLibrary);
   let rawLibrary = providedLibrary || scanLibrary(persisted);
 
-  if (!usesProvidedLibrary && !skipReconciliation) {
+  if (!skipReconciliation) {
     const reconciliation = reconcilePersistedStateWithLibrary(persisted, rawLibrary);
     if (reconciliation.changed) {
       persisted = reconciliation.persisted;
@@ -1246,6 +1322,8 @@ function buildStatePayload(options = {}) {
   vaultLibrary.recents = enrichMangasWithSourceLinks(vaultLibrary.recents, sourceLinks);
   vaultLibrary.categories = enrichCategoriesWithSourceLinks(vaultLibrary.categories, sourceLinks);
   const compactIndex = buildCompactIndex(library);
+  legacySeriesIndex = buildLegacySeriesIndex(library);
+  legacySeriesIndexReady = true;
   rawLibrarySnapshot = rawLibrary;
   if (!skipDerivedSync) {
     try {
@@ -1280,14 +1358,15 @@ function buildStatePayload(options = {}) {
   return payload;
 }
 
-function scheduleInteractiveDerivedSync(delay = 900) {
-  if (interactiveDerivedSyncTimer) {
-    clearTimeout(interactiveDerivedSyncTimer);
+function runInteractiveDerivedSync() {
+  if (interactiveDerivedSyncPromise) {
+    interactiveDerivedSyncQueued = true;
+    return interactiveDerivedSyncPromise;
   }
 
-  interactiveDerivedSyncTimer = setTimeout(() => {
-    interactiveDerivedSyncTimer = null;
-    try {
+  interactiveDerivedSyncPromise = (async () => {
+    do {
+      interactiveDerivedSyncQueued = false;
       const persisted = loadState();
       const baseLibrary = rawLibrarySnapshot || readLibrarySnapshot();
       if (!baseLibrary) return;
@@ -1297,22 +1376,40 @@ function scheduleInteractiveDerivedSync(delay = 900) {
         scanLibrary
       });
       rawLibrarySnapshot = rawLibrary;
-      patchLibrarySnapshot(rawLibrary, {
+      await patchLibrarySnapshotInWorker(rawLibrary, {
         annotationsByManga: persisted.annotations || {}
+      }, {
+        userDataPath: getUserDataPath()
       });
+    } while (interactiveDerivedSyncQueued);
+  })().finally(() => {
+    interactiveDerivedSyncPromise = null;
+  });
+
+  return interactiveDerivedSyncPromise;
+}
+
+function scheduleInteractiveDerivedSync(delay = 900) {
+  if (interactiveDerivedSyncTimer) {
+    clearTimeout(interactiveDerivedSyncTimer);
+  }
+
+  interactiveDerivedSyncTimer = setTimeout(() => {
+    interactiveDerivedSyncTimer = null;
+    runInteractiveDerivedSync().then(() => {
       updateSyncStatusPatch({
         state: 'up-to-date',
         label: 'a jour',
         detail: 'Donnees derivees synchronisees'
       });
-    } catch (error) {
+    }).catch((error) => {
       updateSyncStatusPatch({
         state: 'attention-needed',
         label: 'attention',
         detail: 'Synchronisation derivee a relancer'
       });
       console.error('[library] interactive derived sync failed:', error);
-    }
+    });
   }, delay);
 
   if (typeof interactiveDerivedSyncTimer.unref === 'function') {
@@ -1353,6 +1450,26 @@ function buildInteractivePayload(options = {}) {
   return payload;
 }
 
+async function buildInteractivePayloadAsync(options = {}) {
+  if (!rawLibrarySnapshot && !readLibrarySnapshot()) {
+    rawLibrarySnapshot = await requestLibraryScan(loadState());
+  }
+  return buildInteractivePayload(options);
+}
+
+async function buildPayloadAfterStructuralScan() {
+  if (libraryScanPromise) {
+    await libraryScanPromise.catch(() => {});
+  }
+  const persisted = loadState();
+  const rawLibrary = await requestLibraryScan(persisted);
+  rawLibrarySnapshot = rawLibrary;
+  return buildStatePayload({
+    rawLibrary,
+    skipReconciliation: false
+  });
+}
+
 function getCoreTransitionLibrary() {
   const persisted = loadState();
   const baseLibrary = rawLibrarySnapshot || readLibrarySnapshot();
@@ -1382,42 +1499,10 @@ function getCoreMigrationStatus() {
 }
 
 function fallbackSeriesFromPayload(options = {}) {
-  const payload = buildInteractivePayload({ refreshDerived: false });
-  const query = String(options?.query || '').trim().toLowerCase();
-  const limit = Math.max(1, Math.min(500, Number(options?.limit) || 50));
-  const offset = Math.max(0, Number(options?.offset) || 0);
-  let items = (payload.library?.allMangas || []).map((manga) => ({
-    id: manga.id,
-    contentId: manga.contentId || null,
-    locationId: manga.locationId || null,
-    legacyId: manga.legacyId || manga.id || null,
-    libraryId: manga.categoryId || null,
-    title: manga.displayTitle || manga.name || manga.id,
-    author: manga.author || '',
-    description: manga.description || '',
-    path: manga.path || null,
-    coverSrc: manga.coverSrc || null,
-    pageCount: Number(manga.pageCount || 0),
-    chapterCount: Number(manga.chapterCount || manga.chapters?.length || 0),
-    favorite: Boolean(manga.isFavorite),
-    readState: manga.readingState || (manga.isRead ? 'read' : 'never'),
-    progressPercent: Number(manga.progressPercent || 0),
-    lastReadAt: manga.lastReadAt || null,
-    tags: Array.isArray(manga.tags) ? manga.tags : [],
-    collectionIds: Array.isArray(manga.collectionIds) ? manga.collectionIds : [],
-    payload: manga
-  }));
-  if (query) {
-    items = items.filter((series) => [
-      series.title,
-      series.author,
-      series.description,
-      ...series.tags.map((tag) => tag.name || tag.id || '')
-    ].some((value) => String(value || '').toLowerCase().includes(query)));
+  if (!legacySeriesIndexReady) {
+    buildInteractivePayload({ refreshDerived: false });
   }
-  if (options?.favoriteOnly) items = items.filter((series) => series.favorite);
-  const total = items.length;
-  return { source: 'legacy-snapshot', total, limit, offset, items: items.slice(offset, offset + limit) };
+  return queryLegacySeriesIndex(legacySeriesIndex, options);
 }
 
 function fallbackSeriesDetail(ref) {
@@ -1611,7 +1696,7 @@ async function resolvePageImagePath(page) {
 }
 
 async function collectOcrTargets(input = {}) {
-  const payload = buildStatePayload();
+  const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
   const mangas = getMergedPayloadMangas(payload);
   const entityLibrary = { allMangas: mangas };
 
@@ -1720,7 +1805,7 @@ async function ensureStoredVisualHashForManga(manga, existingHashes = null) {
 }
 
 async function buildVisualDuplicateCandidates() {
-  const payload = buildStatePayload();
+  const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
   const mangas = getMergedPayloadMangas(payload);
   const currentHashes = listVisualHashes();
   const prepared = [];
@@ -2159,7 +2244,16 @@ ipcMain.handle('app:bootstrap', async () => {
       skipScanIndexSync: true,
       skipScanTimestamp: true
     })
-    : buildStatePayload();
+    : await (async () => {
+      const persistedBeforeScan = loadState();
+      const rawLibrary = await requestLibraryScan(persistedBeforeScan);
+      const diskChanged = !areScanIndexesEquivalent(persistedBeforeScan.scanIndex, rawLibrary.scanIndex);
+      return buildStatePayload({
+        rawLibrary,
+        skipReconciliation: false,
+        skipDerivedSync: !diskChanged
+      });
+    })();
   if (hasSnapshot) {
     if (bootstrapChapterDetectionTimer) clearTimeout(bootstrapChapterDetectionTimer);
     bootstrapChapterDetectionTimer = setTimeout(() => {
@@ -2187,7 +2281,8 @@ ipcMain.handle('app:bootstrap', async () => {
 ipcMain.handle('app:getCompactIndex', async () => {
   requestPdfMetaSync();
   const derivedLibrary = readLibrarySnapshot();
-  return derivedLibrary ? buildCompactIndex(derivedLibrary) : buildStatePayload().compactIndex;
+  if (derivedLibrary) return buildCompactIndex(derivedLibrary);
+  return (await buildInteractivePayloadAsync({ refreshDerived: false })).compactIndex;
 });
 
 ipcMain.handle('library:getSyncStatus', async () => {
@@ -2257,7 +2352,7 @@ ipcMain.handle('migration:restoreBackup', async (_event, input = {}) => {
   return {
     ok: true,
     restored,
-    payload: buildStatePayload()
+    payload: await buildPayloadAfterStructuralScan()
   };
 });
 
@@ -2377,9 +2472,9 @@ ipcMain.handle('search:query', async (_event, input = {}) => {
     return { source: 'derived-index', query: String(query || '').trim(), results: advanced };
   }
   return {
-    source: 'legacy-snapshot',
+    source: 'legacy-memory-index',
     query: String(query || '').trim(),
-    results: fallbackSeriesFromPayload({ query, limit }).items.map((series) => ({
+    results: fallbackSeriesFromPayload({ query, limit, includePayload: false }).items.map((series) => ({
       id: series.id,
       type: 'series',
       title: series.title,
@@ -2435,7 +2530,7 @@ ipcMain.handle('library:addCategories', async () => {
   });
 
   restartWatchers();
-  const payload = buildStatePayload();
+  const payload = await buildPayloadAfterStructuralScan();
   requestPdfMetaSync({ refreshLibraryAfterSync: true });
   return payload;
 });
@@ -2452,11 +2547,11 @@ ipcMain.handle('library:removeCategory', async (_event, categoryId) => {
     return state;
   });
   restartWatchers();
-  return buildInteractivePayload();
+  return buildPayloadAfterStructuralScan();
 });
 
 ipcMain.handle('library:trashManga', async (_event, mangaId) => {
-  const payload = buildStatePayload();
+  const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
   const manga = payload.library?.allMangas?.find((entry) => entry.id === mangaId);
 
   if (!manga?.path || !fs.existsSync(manga.path)) {
@@ -2497,7 +2592,7 @@ ipcMain.handle('library:trashManga', async (_event, mangaId) => {
   });
 
   restartWatchers();
-  return buildInteractivePayload();
+  return buildPayloadAfterStructuralScan();
 });
 
 ipcMain.handle('library:toggleCategoryHidden', async (_event, categoryId) => {
@@ -2626,6 +2721,19 @@ ipcMain.handle('library:toggleFavorite', async (_event, mangaId) => {
   return buildInteractivePayload();
 });
 
+ipcMain.handle('library:toggleFavoriteLight', async (_event, mangaId) => {
+  let isFavorite = false;
+  updateState((state) => {
+    isFavorite = !state.favorites?.[mangaId];
+    state.favorites = state.favorites || {};
+    if (isFavorite) state.favorites[mangaId] = true;
+    else delete state.favorites[mangaId];
+    return state;
+  });
+  scheduleInteractiveDerivedSync();
+  return { ok: true, mangaId, isFavorite };
+});
+
 ipcMain.handle('library:bulkFavorite', async (_event, mangaIds = [], nextValue = true) => {
   const ids = [...new Set((Array.isArray(mangaIds) ? mangaIds : []).map((value) => String(value || '').trim()).filter(Boolean))];
   updateState((state) => {
@@ -2686,20 +2794,31 @@ ipcMain.handle('library:setPrivateCategoryFlag', async (_event, categoryId, isPr
 
 ipcMain.handle('library:forceRescan', async () => {
   restartWatchers();
-  ensureQueuedJob('scan', { source: 'manual-rescan' });
+  const scanJob = ensureQueuedJob('scan', { source: 'manual-rescan' });
   await jobOrchestrator.process();
-  const payload = buildStatePayload();
   requestPdfMetaSync({ refreshLibraryAfterSync: true });
-  return payload;
+  const completedJob = getJob(scanJob.id);
+  if (completedJob?.progress?.diskChanged === false) {
+    return { ok: true, changed: false, syncStatus: latestSyncStatus };
+  }
+  return {
+    ok: true,
+    changed: true,
+    payload: buildInteractivePayload({ refreshDerived: false }),
+    syncStatus: latestSyncStatus
+  };
 });
 
 ipcMain.handle('library:runDeepScan', async () => {
   restartWatchers();
-  ensureQueuedJob('deep-scan', { source: 'manual-deep-scan' });
+  const scanJob = ensureQueuedJob('deep-scan', { source: 'manual-deep-scan' });
   await jobOrchestrator.process();
+  const completedJob = getJob(scanJob.id);
+  const changed = completedJob?.progress?.diskChanged !== false;
   return {
     ok: true,
-    payload: buildStatePayload(),
+    changed,
+    payload: changed ? buildInteractivePayload({ refreshDerived: false }) : null,
     syncStatus: latestSyncStatus
   };
 });
@@ -2741,6 +2860,23 @@ ipcMain.handle('reading:setReadStatus', async (_event, mangaId, isRead, chapterI
   return buildInteractivePayload();
 });
 
+ipcMain.handle('reading:setReadStatusLight', async (_event, mangaId, isRead, chapterIds = []) => {
+  updateState((state) => {
+    for (const chapterId of Array.isArray(chapterIds) ? chapterIds : []) {
+      if (isRead) state.chapterReadStatus[chapterId] = true;
+      else {
+        delete state.chapterReadStatus[chapterId];
+        if (state.progress[chapterId]) state.progress[chapterId] = { ...state.progress[chapterId], pageIndex: 0 };
+      }
+    }
+    if (isRead) state.readStatus[mangaId] = true;
+    else delete state.readStatus[mangaId];
+    return state;
+  });
+  scheduleInteractiveDerivedSync();
+  return { ok: true, mangaId, isRead: Boolean(isRead) };
+});
+
 ipcMain.handle('reading:setChapterReadStatus', async (_event, mangaId, chapterId, isRead, pageCount = 0) => {
   updateState((state) => {
     if (isRead) {
@@ -2762,6 +2898,28 @@ ipcMain.handle('reading:setChapterReadStatus', async (_event, mangaId, chapterId
     return state;
   });
   return buildInteractivePayload();
+});
+
+ipcMain.handle('reading:setChapterReadStatusLight', async (_event, mangaId, chapterId, isRead, pageCount = 0) => {
+  updateState((state) => {
+    if (isRead) {
+      state.chapterReadStatus[chapterId] = true;
+      state.progress[chapterId] = {
+        ...(state.progress[chapterId] || {}),
+        mangaId,
+        chapterId,
+        pageIndex: Math.max(0, pageCount - 1),
+        pageCount,
+        lastReadAt: new Date().toISOString()
+      };
+    } else {
+      delete state.chapterReadStatus[chapterId];
+      if (state.progress[chapterId]) state.progress[chapterId] = { ...state.progress[chapterId], pageIndex: 0, pageCount };
+    }
+    return state;
+  });
+  scheduleInteractiveDerivedSync();
+  return { ok: true, mangaId, chapterId, isRead: Boolean(isRead), pageCount };
 });
 
 ipcMain.handle('reading:resetProgress', async (_event, mangaId, chapterIds = []) => {
@@ -2865,6 +3023,16 @@ ipcMain.handle('tags:toggleForManga', async (_event, mangaId, tagId) => {
   return buildInteractivePayload();
 });
 
+ipcMain.handle('tags:toggleForMangaLight', async (_event, mangaId, tagId) => {
+  const state = loadState();
+  const current = state.mangaTags?.[mangaId] || [];
+  const isAssigned = !current.includes(tagId);
+  if (isAssigned) addTagToManga(mangaId, tagId);
+  else removeTagFromManga(mangaId, tagId);
+  scheduleInteractiveDerivedSync();
+  return { ok: true, mangaId, tagId, isAssigned };
+});
+
 ipcMain.handle('tags:addMany', async (_event, tagId, mangaIds = []) => {
   const ids = [...new Set((Array.isArray(mangaIds) ? mangaIds : []).map((value) => String(value || '').trim()).filter(Boolean))];
   if (ids.length > 0) {
@@ -2900,9 +3068,21 @@ ipcMain.handle('collections:addManga', async (_event, collectionId, mangaId) => 
   return buildInteractivePayload();
 });
 
+ipcMain.handle('collections:addMangaLight', async (_event, collectionId, mangaId) => {
+  addMangaToCollection(collectionId, mangaId);
+  scheduleInteractiveDerivedSync();
+  return { ok: true, collectionId, mangaId, isAssigned: true };
+});
+
 ipcMain.handle('collections:removeManga', async (_event, collectionId, mangaId) => {
   removeMangaFromCollection(collectionId, mangaId);
   return buildInteractivePayload();
+});
+
+ipcMain.handle('collections:removeMangaLight', async (_event, collectionId, mangaId) => {
+  removeMangaFromCollection(collectionId, mangaId);
+  scheduleInteractiveDerivedSync();
+  return { ok: true, collectionId, mangaId, isAssigned: false };
 });
 
 ipcMain.handle('collections:addMany', async (_event, collectionId, mangaIds = []) => {
@@ -3795,8 +3975,9 @@ ipcMain.handle('metadata:importOnline', async (_event, mangaId, onlineData) => {
 
   if (onlineData.coverDownloadUrl || onlineData.coverUrl) {
     try {
-      const rawLibrary = scanLibrary(loadState());
-      const manga = findMangaByReference(rawLibrary, mangaId);
+      const currentPayload = await buildInteractivePayloadAsync({ refreshDerived: false });
+      const manga = findMangaByReference(currentPayload.library, mangaId)
+        || findMangaByReference(currentPayload.vaultLibrary, mangaId);
       if (manga?.path && fs.existsSync(manga.path)) {
         const remoteUrl = onlineData.coverDownloadUrl || onlineData.coverUrl;
         const response = await net.fetch(remoteUrl, { headers: buildRemoteHeaders(remoteUrl) });
@@ -4086,7 +4267,7 @@ ipcMain.handle('annotations:delete', async (_event, mangaId, annotationId) => {
 
 ipcMain.handle('backup:create', async (_event, label) => {
   const result = createBackup(label);
-  return { ...buildStatePayload(), backup: result };
+  return { ...(await buildInteractivePayloadAsync({ refreshDerived: false })), backup: result };
 });
 
 ipcMain.handle('backup:import', async () => {
@@ -4105,7 +4286,7 @@ ipcMain.handle('backup:import', async () => {
   try {
     const importResult = importBackup(result.filePaths[0]);
     restartWatchers();
-    return { ...buildStatePayload(), ...importResult };
+    return { ...(await buildPayloadAfterStructuralScan()), ...importResult };
   } catch (error) {
     return { restored: false, error: error?.message || 'Import failed' };
   }
@@ -4428,7 +4609,7 @@ ipcMain.handle('maintenance:rebuildDerivedData', async () => {
   await jobOrchestrator.process();
   return {
     ok: true,
-    payload: buildStatePayload(),
+    payload: await buildInteractivePayloadAsync({ refreshDerived: false }),
     syncStatus: latestSyncStatus
   };
 });
@@ -4649,7 +4830,7 @@ ipcMain.handle('ocr:cancel', async (_event, jobId) => ({
 }));
 
 ipcMain.handle('comicinfo:export', async (_event, input = {}) => {
-  const payload = buildStatePayload();
+  const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
   const mangaRef = input?.mangaId || input?.mangaContentId || input?.mangaLocationId;
   const manga = findMangaByReference(payload.library, mangaRef) || findMangaByReference(payload.vaultLibrary, mangaRef);
   if (!manga) {

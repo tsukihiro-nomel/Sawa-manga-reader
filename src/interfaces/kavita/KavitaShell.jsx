@@ -37,6 +37,7 @@ import KavitaEditorDialog from './KavitaEditorDialog.jsx';
 import KavitaContextMenu from './KavitaContextMenu.jsx';
 import KavitaOnlineMetadataDialog from './KavitaOnlineMetadataDialog.jsx';
 import { resolveEditorManga, resolveMangaCollections } from './kavitaState.js';
+import { isTextContextRequest } from '../../utils/textContextMenu.js';
 import './kavita.css';
 
 const MAIN_NAV = [
@@ -243,6 +244,7 @@ function KavitaShell({ model }) {
     [currentManga, library, onlineMetadataMangaId]
   );
   const openContextMenu = (event, context) => {
+    if (isTextContextRequest(event)) return;
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({

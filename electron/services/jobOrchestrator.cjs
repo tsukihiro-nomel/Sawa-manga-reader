@@ -211,12 +211,13 @@ class JobOrchestrator {
     };
   }
 
-  schedule() {
+  schedule(delay = 0) {
     if (this._scheduled) return;
     this._scheduled = setTimeout(() => {
       this._scheduled = null;
       this.process().catch(() => {});
-    }, 0);
+    }, Math.max(0, Number(delay) || 0));
+    if (typeof this._scheduled.unref === 'function') this._scheduled.unref();
   }
 
   laneAvailable(job, runningJobs = []) {
@@ -230,6 +231,15 @@ class JobOrchestrator {
   }
 
   blockedByProfile(job) {
+    if (job.lane === 'scanAnalyze' && this.readerActive) return true;
+    if (job.lane === 'scanAnalyze') {
+      const source = String(job.payload?.source || '');
+      const explicit = source.includes('manual') || source.includes('maintenance');
+      if (!explicit) {
+        const quietMs = this.profile === 'interactive' ? 2500 : this.profile === 'idle-only' ? 5000 : 1200;
+        if ((Date.now() - this.lastInteractionAt) < quietMs) return true;
+      }
+    }
     if (job.lane !== 'heavy') return false;
     if (this.profile === 'interactive') {
       return this.readerActive || (Date.now() - this.lastInteractionAt) < 60000;
@@ -270,6 +280,12 @@ class JobOrchestrator {
     } finally {
       this.processing = false;
       this.notify();
+      const hasTemporarilyDeferredJob = !this.readerActive && this.list().some((job) => (
+        job.status === 'queued'
+        && this.blockedByProfile(job)
+        && !(job.lane === 'heavy' && this.profile === 'idle-only')
+      ));
+      if (hasTemporarilyDeferredJob) this.schedule(500);
     }
   }
 

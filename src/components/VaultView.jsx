@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import MangaCard from './MangaCard.jsx';
+import { memo, useMemo, useState } from 'react';
+import VirtualMangaGrid from './VirtualMangaGrid.jsx';
 import { ArchiveIcon, EyeIcon, EyeOffIcon, LockIcon, SettingsIcon } from './Icons.jsx';
 
 function getSecurityLabel(vault) {
@@ -96,6 +96,7 @@ function VaultView({
   vault,
   mangas,
   categories = [],
+  cardSize = 'comfortable',
   activeCategoryId = null,
   initialScrollTop = 0,
   scrollKey,
@@ -119,42 +120,10 @@ function VaultView({
     () => categories.find((category) => category.id === activeCategoryId) || null,
     [activeCategoryId, categories]
   );
-  const containerRef = useRef(null);
-  const savingBlockedRef = useRef(false);
-
-  useLayoutEffect(() => {
-    const element = containerRef.current;
-    if (!element) return undefined;
-    savingBlockedRef.current = true;
-    const apply = () => {
-      element.scrollTop = initialScrollTop || 0;
-    };
-    const raf = window.requestAnimationFrame(apply);
-    const releaseTimer = window.setTimeout(() => {
-      apply();
-      savingBlockedRef.current = false;
-    }, 120);
-    return () => {
-      window.cancelAnimationFrame(raf);
-      window.clearTimeout(releaseTimer);
-      savingBlockedRef.current = false;
-    };
-  }, [scrollKey, initialScrollTop]);
-
-  const handleScroll = useCallback(() => {
-    if (savingBlockedRef.current) return;
-    const element = containerRef.current;
-    if (element) onScrollPositionChange?.(element.scrollTop);
-  }, [onScrollPositionChange]);
-
-  useEffect(() => () => {
-    const element = containerRef.current;
-    if (element) onScrollPositionChange?.(element.scrollTop);
-  }, [onScrollPositionChange]);
 
   if (!vault?.configured) {
     return (
-      <section className="vault-view" ref={containerRef} onScroll={handleScroll}>
+      <section className="vault-view">
         <VaultSetupCard
           configured={false}
           vault={vault}
@@ -169,7 +138,7 @@ function VaultView({
 
   if (vault.locked) {
     return (
-      <section className="vault-view" ref={containerRef} onScroll={handleScroll}>
+      <section className="vault-view">
         <VaultSetupCard
           configured
           vault={vault}
@@ -189,8 +158,8 @@ function VaultView({
     ? `${visibleCount} titre${visibleCount > 1 ? 's' : ''} dans ${activeCategory.name}`
     : `${totalProtected} titre${totalProtected > 1 ? 's' : ''} proteges`;
 
-  return (
-    <section className="vault-view" ref={containerRef} onScroll={handleScroll}>
+  const vaultHeader = (
+    <div className="vault-scroll-header">
       <div className="vault-hero">
         <div>
           <span className="vault-kicker">Coffre prive</span>
@@ -253,7 +222,13 @@ function VaultView({
         </div>
       ) : null}
 
-      {mangas.length === 0 ? (
+    </div>
+  );
+
+  if (mangas.length === 0) {
+    return (
+      <section className="vault-view">
+        {vaultHeader}
         <div className="vault-empty-card">
           <ArchiveIcon size={18} />
           <strong>{activeCategory ? 'Cette categorie privee est vide.' : 'Le coffre est vide.'}</strong>
@@ -263,24 +238,29 @@ function VaultView({
               : 'Envoie des mangas ou une categorie complete ici depuis le menu contextuel ou les actions en masse.'}
           </span>
         </div>
-      ) : (
-        <div className="vault-grid">
-          {mangas.map((manga) => (
-            <MangaCard
-              key={manga.id}
-              manga={manga}
-              onOpen={onOpenManga}
-              onOpenBackground={onOpenMangaInBackgroundTab}
-              onToggleFavorite={onToggleFavorite}
-              onContextMenu={onContextMenu}
-              selected={selectedIds.has(manga.id)}
-              selectionMode={selectionMode}
-              onToggleSelect={onToggleSelect}
-              privateBlur={vault.blurCovers}
-            />
-          ))}
-        </div>
-      )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="vault-view vault-view-virtualized">
+        <VirtualMangaGrid
+          mangas={mangas}
+          className="vault-grid-virtual"
+          cardSize={cardSize}
+          header={vaultHeader}
+          initialScrollTop={initialScrollTop}
+          scrollKey={scrollKey}
+          onScrollPositionChange={onScrollPositionChange}
+          onOpen={onOpenManga}
+          onOpenBackground={onOpenMangaInBackgroundTab}
+          onToggleFavorite={onToggleFavorite}
+          onContextMenu={onContextMenu}
+          selectedIds={selectedIds}
+          selectionMode={selectionMode}
+          onToggleSelect={onToggleSelect}
+          privateBlur={vault.blurCovers}
+        />
     </section>
   );
 }

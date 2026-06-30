@@ -5300,6 +5300,41 @@ img { display: block; max-width: 100%; }
   font-size: 0.64rem;
 }
 
+.mc-performance {
+  contain: layout paint style;
+  transform: none;
+  transform-style: flat;
+  backdrop-filter: none;
+  will-change: auto;
+  transition: border-color 140ms ease, background-color 140ms ease;
+  background: var(--bg-elevated-2);
+  box-shadow: none;
+}
+.mc-performance::before,
+.mc-performance::after {
+  display: none;
+}
+.mc-performance:hover,
+.mc-performance:active {
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+.mc-performance .mc-cover,
+.mc-performance:hover .mc-cover,
+.mc-performance .mc-cover .thumb-media,
+.mc-performance:hover .mc-cover .thumb-media {
+  transform: none;
+  filter: none;
+  transition: none;
+  box-shadow: 0 4px 12px rgba(8, 8, 22, 0.12);
+}
+.mc-performance .mc-badge,
+.mc-performance .mc-fav {
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
 .theme-light .mc,
 .theme-light-paper .mc {
   background:
@@ -11314,6 +11349,66 @@ img { display: block; max-width: 100%; }
 
 .manga-grid-virtual {
   overflow-x: clip;
+  flex: 0 0 auto;
+}
+
+.virtual-manga-grid-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  height: clamp(360px, 58vh, 760px);
+  min-height: 300px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.vault-view-virtualized {
+  overflow: hidden;
+}
+
+.vault-grid-virtual {
+  height: 100%;
+  min-height: 0;
+}
+
+.virtual-manga-grid-canvas {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.virtual-manga-grid-header {
+  position: absolute;
+  inset: 0 0 auto;
+  width: 100%;
+}
+
+.vault-scroll-header {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 0 2px 18px;
+}
+
+.virtual-manga-grid-row {
+  padding-inline: 2px;
+}
+
+.chapter-pagination,
+.kv-chapter-pagination {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.chapter-pagination span,
+.kv-chapter-pagination span {
+  color: var(--text-soft);
+  font-size: 0.82rem;
 }
 
 /* ===== Sidebar principale v4.1 : react-pro-sidebar ===== */

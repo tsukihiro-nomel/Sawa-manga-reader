@@ -112,6 +112,48 @@ function getScanEntries(scanIndex) {
   return [];
 }
 
+const SCAN_ENTRY_COMPARISON_FIELDS = [
+  'type',
+  'legacyId',
+  'contentId',
+  'locationId',
+  'path',
+  'containerType',
+  'chapterCount',
+  'pageCount',
+  'size',
+  'mtimeMs',
+  'healthStatus',
+  'signature'
+];
+
+function scanEntryKey(entry = {}) {
+  return String(entry.locationId || entry.path || entry.legacyId || entry.contentId || '').trim();
+}
+
+function areScanEntriesEquivalent(left, right) {
+  return SCAN_ENTRY_COMPARISON_FIELDS.every((field) => {
+    const leftValue = left?.[field] ?? null;
+    const rightValue = right?.[field] ?? null;
+    if (field === 'path') return normalizePathKey(leftValue) === normalizePathKey(rightValue);
+    return leftValue === rightValue;
+  });
+}
+
+function areScanIndexesEquivalent(previousIndex, nextIndex) {
+  const previousEntries = getScanEntries(previousIndex);
+  const nextEntries = getScanEntries(nextIndex);
+  if (previousEntries.length !== nextEntries.length) return false;
+
+  const previousByKey = new Map(previousEntries.map((entry) => [scanEntryKey(entry), entry]));
+  if (previousByKey.size !== previousEntries.length || previousByKey.has('')) return false;
+
+  return nextEntries.every((entry) => {
+    const previous = previousByKey.get(scanEntryKey(entry));
+    return Boolean(previous && areScanEntriesEquivalent(previous, entry));
+  });
+}
+
 function buildPreviousScanLookup(persistedState = {}) {
   const entries = getScanEntries(persistedState?.scanIndex);
   const byPath = new Map();
@@ -789,5 +831,6 @@ module.exports = {
   isImageFile,
   isPdfFile,
   isCbzFile,
-  buildCompactIndex
+  buildCompactIndex,
+  areScanIndexesEquivalent
 };

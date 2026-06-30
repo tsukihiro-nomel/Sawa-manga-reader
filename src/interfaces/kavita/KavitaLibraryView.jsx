@@ -71,6 +71,7 @@ const KavitaCoverCard = memo(function KavitaCoverCard({
         {manga.coverSrc || manga.coverMediaType === 'pdf' ? (
           <MediaAsset
             src={manga.coverSrc}
+            thumbnail
             alt={title}
             className="kv-cover-image"
             mediaType={manga.coverMediaType || 'image'}
@@ -162,7 +163,7 @@ function KavitaLibraryView({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
-    overscan: 3
+    overscan: 1
   });
 
   return (

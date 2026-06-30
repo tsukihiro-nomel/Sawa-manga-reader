@@ -1,7 +1,22 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { app } = require('electron');
+
+// `electron` is only resolvable in the main/renderer process. This module is
+// also loaded from worker threads (library scan / derived sync), where
+// `require('electron')` throws "Cannot find module 'electron'". Resolve it
+// lazily and tolerate its absence; worker threads rely on the
+// SAWA_USER_DATA_PATH override instead.
+let cachedElectronApp;
+function getElectronApp() {
+  if (cachedElectronApp !== undefined) return cachedElectronApp;
+  try {
+    cachedElectronApp = require('electron').app || null;
+  } catch (error) {
+    cachedElectronApp = null;
+  }
+  return cachedElectronApp;
+}
 
 const STORAGE_VERSION = 3;
 const STATE_VERSION = 3;
@@ -210,13 +225,14 @@ function ensureDir(dirPath) {
 let cachedState = null;
 
 function getUserDataPath() {
-  if (app && typeof app.getPath === 'function') {
-    return app.getPath('userData');
-  }
   const overridePath = String(process.env.SAWA_USER_DATA_PATH || '').trim();
   if (overridePath) {
     ensureDir(overridePath);
     return overridePath;
+  }
+  const app = getElectronApp();
+  if (app && typeof app.getPath === 'function') {
+    return app.getPath('userData');
   }
   const fallbackPath = path.join(os.tmpdir(), 'sawa-manga-library-cli');
   ensureDir(fallbackPath);
@@ -507,11 +523,17 @@ function normalizeScanIndex(scanIndex) {
     const pathValue = String(value.path || '').trim();
     const locationId = String(value.locationId || value.id || value.path || '').trim();
     if (!pathValue || !locationId) continue;
+    const type = String(value.type || value.kind || '').trim() || 'item';
+    const nullableNumber = (input) => {
+      if (input === null || input === undefined || input === '') return null;
+      const parsed = Number(input);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
     entries[locationId] = {
       locationId,
       path: pathValue,
       kind: String(value.kind || value.type || '').trim() || 'item',
-      type: String(value.type || value.kind || '').trim() || 'item',
+      type,
       legacyId: String(value.legacyId || '').trim() || null,
       contentId: String(value.contentId || '').trim() || null,
       containerType: String(value.containerType || '').trim() || null,
@@ -519,8 +541,9 @@ function normalizeScanIndex(scanIndex) {
       healthStatus: String(value.healthStatus || '').trim() || 'ok',
       size: Number.isFinite(Number(value.size)) ? Number(value.size) : 0,
       mtimeMs: Number.isFinite(Number(value.mtimeMs)) ? Number(value.mtimeMs) : 0,
-      pageCount: Number.isFinite(Number(value.pageCount)) ? Number(value.pageCount) : null,
-      chapterCount: Number.isFinite(Number(value.chapterCount)) ? Number(value.chapterCount) : null,
+      pageCount: nullableNumber(value.pageCount),
+      chapterCount: type === 'chapter' ? null : nullableNumber(value.chapterCount),
+      signature: String(value.signature || '').trim() || null,
       categoryId: value.categoryId ? String(value.categoryId) : null,
       mangaContentId: value.mangaContentId ? String(value.mangaContentId) : null,
       lastError: value.lastError ? String(value.lastError) : null,

@@ -1,8 +1,14 @@
+const fs = require('fs');
+const path = require('path');
 const chokidar = require('chokidar');
 
 class LibraryWatcher {
-  constructor() {
+  constructor(options = {}) {
+    this.platform = options.platform || process.platform;
+    this.fsImpl = options.fsImpl || fs;
+    this.chokidarImpl = options.chokidarImpl || chokidar;
     this.watcher = null;
+    this.nativeWatchers = [];
     this.timer = null;
     this.pending = new Map();
     this.onChange = null;
@@ -20,15 +26,6 @@ class LibraryWatcher {
     this.startedAt = Date.now();
     this.pending.clear();
 
-    this.watcher = chokidar.watch(validPaths, {
-      ignoreInitial: true,
-      depth: 8,
-      awaitWriteFinish: {
-        stabilityThreshold: 320,
-        pollInterval: 80
-      }
-    });
-
     const record = (kind, targetPath) => {
       const normalizedPath = String(targetPath || '');
       if (!normalizedPath) return;
@@ -45,6 +42,32 @@ class LibraryWatcher {
       this.pending.set(key, existing);
       this.scheduleFlush();
     };
+
+    if (this.platform === 'win32' && typeof this.fsImpl.watch === 'function') {
+      try {
+        this.nativeWatchers = validPaths.map((rootPath) => {
+          const nativeWatcher = this.fsImpl.watch(rootPath, { recursive: true }, (eventType, fileName) => {
+            const relativePath = String(fileName || '').trim();
+            record(eventType || 'change', relativePath ? path.join(rootPath, relativePath) : rootPath);
+          });
+          nativeWatcher.on?.('error', () => this.scheduleFlush());
+          return nativeWatcher;
+        });
+        return;
+      } catch (_error) {
+        this.nativeWatchers.forEach((nativeWatcher) => nativeWatcher?.close?.());
+        this.nativeWatchers = [];
+      }
+    }
+
+    this.watcher = this.chokidarImpl.watch(validPaths, {
+      ignoreInitial: true,
+      depth: 8,
+      awaitWriteFinish: {
+        stabilityThreshold: 320,
+        pollInterval: 80
+      }
+    });
 
     this.watcher.on('add', (targetPath) => record('add', targetPath));
     this.watcher.on('addDir', (targetPath) => record('addDir', targetPath));
@@ -80,6 +103,10 @@ class LibraryWatcher {
     clearTimeout(this.timer);
     this.timer = null;
     this.pending.clear();
+    this.nativeWatchers.forEach((nativeWatcher) => {
+      try { nativeWatcher?.close?.(); } catch (_) {}
+    });
+    this.nativeWatchers = [];
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;

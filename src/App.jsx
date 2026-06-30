@@ -52,6 +52,15 @@ import {
   sortMangas
 } from './utils/reader.js';
 import { mergePayloadForStability } from './utils/payloadMerge.js';
+import { createLibraryReferenceIndex } from './utils/libraryReferenceIndex.js';
+import { isTextContextRequest } from './utils/textContextMenu.js';
+import {
+  applyChapterReadMutation,
+  applyCollectionMutation,
+  applyFavoriteMutation,
+  applyMangaReadMutation,
+  applyTagMutation
+} from './utils/payloadMutations.js';
 
 const SettingsDrawer = lazy(() => import('./components/SettingsDrawer.jsx'));
 const CollectionsView = lazy(() => import('./components/CollectionsView.jsx'));
@@ -1018,24 +1027,15 @@ export default function App() {
     };
   }, [payload, advancedSearchQuery]);
 
+  const libraryReferenceIndex = useMemo(
+    () => createLibraryReferenceIndex(library),
+    [library]
+  );
+
   const advancedSearchMangaIds = useMemo(() => {
     if (!advancedSearchQuery) return null;
-    const matches = new Set();
-    (advancedSearchState.results || []).forEach((result) => {
-      const directManga = findManga(library, result?.itemContentId || result?.itemLocationId);
-      if (directManga) {
-        matches.add(directManga.id);
-        return;
-      }
-
-      library.allMangas.forEach((manga) => {
-        if ((manga.chapters || []).some((chapter) => matchesEntityReference(chapter, result?.itemContentId || result?.itemLocationId))) {
-          matches.add(manga.id);
-        }
-      });
-    });
-    return matches;
-  }, [advancedSearchQuery, advancedSearchState.results, library]);
+    return libraryReferenceIndex.resolveMangaIds(advancedSearchState.results);
+  }, [advancedSearchQuery, advancedSearchState.results, libraryReferenceIndex]);
 
   const filteredMangas = useMemo(() => {
     const byCategory = baseMangas.filter((manga) => {
@@ -1606,6 +1606,25 @@ export default function App() {
     startTransition(() => {
       setPayload((previous) => mergePayloadForStability(previous, nextPayload));
     });
+  }
+
+  async function applyOptimisticMutation(updatePayload, persist, fallback) {
+    if (typeof persist !== 'function') {
+      await refreshWith(fallback());
+      return;
+    }
+    setPayload((previous) => updatePayload(previous));
+    try {
+      const result = await persist();
+      if (result?.ok === false) throw new Error(result.error || 'Ecriture locale impossible.');
+    } catch (_error) {
+      try {
+        const restored = await window.mangaAPI.bootstrap();
+        if (restored?.library) setPayload(restored);
+      } catch (_) {
+        // L'etat optimiste reste utilisable jusqu'a la prochaine synchronisation.
+      }
+    }
   }
 
   function scheduleBackgroundBootstrapRefresh(delay = 1200) {
@@ -2290,7 +2309,13 @@ export default function App() {
   }
 
   async function handleToggleFavorite(mangaId) {
-    await refreshWith(window.mangaAPI.toggleFavorite(mangaId));
+    const manga = findManga(library, mangaId) || findManga(vaultLibrary, mangaId);
+    const isFavorite = !manga?.isFavorite;
+    await applyOptimisticMutation(
+      (previous) => applyFavoriteMutation(previous, mangaId, isFavorite),
+      window.mangaAPI.toggleFavoriteLight ? () => window.mangaAPI.toggleFavoriteLight(mangaId) : null,
+      () => window.mangaAPI.toggleFavorite(mangaId)
+    );
   }
 
   async function handleTrashManga(mangaId) {
@@ -2302,11 +2327,21 @@ export default function App() {
   }
 
   async function handleSetReadStatus(mangaId, isRead, chapterIds = []) {
-    await refreshWith(window.mangaAPI.setReadStatus(mangaId, isRead, chapterIds));
+    await applyOptimisticMutation(
+      (previous) => applyMangaReadMutation(previous, mangaId, isRead, chapterIds),
+      window.mangaAPI.setReadStatusLight ? () => window.mangaAPI.setReadStatusLight(mangaId, isRead, chapterIds) : null,
+      () => window.mangaAPI.setReadStatus(mangaId, isRead, chapterIds)
+    );
   }
 
   async function handleSetChapterReadStatus(mangaId, chapterId, isRead, pageCount = 0) {
-    await refreshWith(window.mangaAPI.setChapterReadStatus(mangaId, chapterId, isRead, pageCount));
+    await applyOptimisticMutation(
+      (previous) => applyChapterReadMutation(previous, mangaId, chapterId, isRead, pageCount),
+      window.mangaAPI.setChapterReadStatusLight
+        ? () => window.mangaAPI.setChapterReadStatusLight(mangaId, chapterId, isRead, pageCount)
+        : null,
+      () => window.mangaAPI.setChapterReadStatus(mangaId, chapterId, isRead, pageCount)
+    );
   }
 
   async function handleResetProgress(mangaId, chapterIds = []) {
@@ -2339,11 +2374,23 @@ export default function App() {
   }
 
   async function handleToggleTag(mangaId, tagId) {
-    await refreshWith(window.mangaAPI.toggleMangaTag(mangaId, tagId));
+    const manga = findManga(library, mangaId) || findManga(vaultLibrary, mangaId);
+    const isAssigned = !(manga?.tags || []).some((tag) => tag.id === tagId);
+    await applyOptimisticMutation(
+      (previous) => applyTagMutation(previous, mangaId, tagId, isAssigned),
+      window.mangaAPI.toggleMangaTagLight ? () => window.mangaAPI.toggleMangaTagLight(mangaId, tagId) : null,
+      () => window.mangaAPI.toggleMangaTag(mangaId, tagId)
+    );
   }
 
   async function handleAddToCollection(mangaId, collectionId) {
-    await refreshWith(window.mangaAPI.addMangaToCollection(collectionId, mangaId));
+    await applyOptimisticMutation(
+      (previous) => applyCollectionMutation(previous, mangaId, collectionId, true),
+      window.mangaAPI.addMangaToCollectionLight
+        ? () => window.mangaAPI.addMangaToCollectionLight(collectionId, mangaId)
+        : null,
+      () => window.mangaAPI.addMangaToCollection(collectionId, mangaId)
+    );
   }
 
   async function handleCreateCollection(name, description) {
@@ -2359,7 +2406,13 @@ export default function App() {
   }
 
   async function handleRemoveMangaFromCollection(collectionId, mangaId) {
-    await refreshWith(window.mangaAPI.removeMangaFromCollection(collectionId, mangaId));
+    await applyOptimisticMutation(
+      (previous) => applyCollectionMutation(previous, mangaId, collectionId, false),
+      window.mangaAPI.removeMangaFromCollectionLight
+        ? () => window.mangaAPI.removeMangaFromCollectionLight(collectionId, mangaId)
+        : null,
+      () => window.mangaAPI.removeMangaFromCollection(collectionId, mangaId)
+    );
   }
 
   async function handleUpdateSettings(patch) {
@@ -2573,8 +2626,14 @@ export default function App() {
 
   async function handleForceRescan() {
     setMaintenanceStats(null);
-    await refreshWith(window.mangaAPI.forceRescan());
-    const status = await window.mangaAPI.getSyncStatus().catch(() => null);
+    const result = await window.mangaAPI.forceRescan();
+    const nextPayload = result?.payload || (result?.library ? result : null);
+    if (nextPayload) {
+      startTransition(() => {
+        setPayload((previous) => mergePayloadForStability(previous, nextPayload));
+      });
+    }
+    const status = result?.syncStatus || await window.mangaAPI.getSyncStatus().catch(() => null);
     setSyncStatus(status);
   }
 
@@ -3220,6 +3279,7 @@ export default function App() {
   }
 
   function openContextMenu(event, context = { type: 'app' }) {
+    if (isTextContextRequest(event)) return;
     event.preventDefault();
     event.stopPropagation();
     const menuWidth = 280;
@@ -4098,6 +4158,7 @@ export default function App() {
                   vault={vaultState}
                   mangas={filteredPrivateMangas}
                   categories={vaultCategories}
+                  cardSize={ui.cardSize}
                   activeCategoryId={vaultCategoryFilterId}
                   selectionMode={selectionMode}
                   selectedIds={selectedMangaIdSet}

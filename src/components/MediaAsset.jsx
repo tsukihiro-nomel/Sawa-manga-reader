@@ -1,7 +1,15 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { renderPdfPageToCanvas } from '../utils/pdf.js';
 
 const DEFAULT_ROOT_MARGIN = '400px';
+
+export function buildOptimizedImageSrc(src, options = {}) {
+  if (!src || !options.thumbnail || !/^manga:\/\/(local|cbz)\//i.test(String(src))) return src;
+  const width = Math.max(32, Math.min(1024, Math.floor(Number(options.maxWidth) || 360)));
+  const height = Math.max(32, Math.min(1024, Math.floor(Number(options.maxHeight) || 540)));
+  const separator = String(src).includes('?') ? '&' : '?';
+  return `${src}${separator}thumbnail=1&w=${width}&h=${height}`;
+}
 
 function PdfCanvasAsset({
   filePath,
@@ -12,6 +20,7 @@ function PdfCanvasAsset({
   maxWidth = 1200,
   maxHeight = 1600,
   lazy = true,
+  thumbnail = false,
   rootMargin = DEFAULT_ROOT_MARGIN,
   ...rest
 }) {
@@ -101,6 +110,7 @@ function MediaAsset({
   maxWidth = 1200,
   maxHeight = 1600,
   lazy = true,
+  thumbnail = false,
   rootMargin = DEFAULT_ROOT_MARGIN,
   ...rest
 }) {
@@ -108,6 +118,11 @@ function MediaAsset({
     if (mediaType) return mediaType;
     return filePath?.toLowerCase?.().endsWith('.pdf') ? 'pdf' : 'image';
   }, [mediaType, filePath]);
+  const optimizedSrc = useMemo(() => buildOptimizedImageSrc(src, {
+    thumbnail,
+    maxWidth,
+    maxHeight
+  }), [src, thumbnail, maxWidth, maxHeight]);
 
   if (resolvedMediaType === 'pdf' && filePath) {
     return (
@@ -128,7 +143,7 @@ function MediaAsset({
 
   return (
     <img
-      src={src}
+      src={optimizedSrc}
       alt={alt}
       loading={loading}
       draggable={draggable}

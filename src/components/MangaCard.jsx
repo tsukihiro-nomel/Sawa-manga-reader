@@ -13,7 +13,8 @@ const MangaCard = memo(function MangaCard({
   selectionMode = false,
   selected = false,
   onToggleSelect,
-  privateBlur = false
+  privateBlur = false,
+  performanceMode = false
 }) {
   const cardRef = useRef(null);
   const pendingPointerRef = useRef(null);
@@ -58,7 +59,7 @@ const MangaCard = memo(function MangaCard({
   // every card on screen would run getBoundingClientRect + 4 style writes per event, which is a
   // heavy cost with 20+ cards visible. Coalesce into a single update per animation frame.
   const handlePointerMove = useCallback((event) => {
-    if (compact || selectionMode) return;
+    if (compact || performanceMode || selectionMode) return;
     pendingPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
     if (pointerRafRef.current != null) return;
     pointerRafRef.current = window.requestAnimationFrame(() => {
@@ -78,7 +79,7 @@ const MangaCard = memo(function MangaCard({
       node.style.setProperty('--mc-shine-x', `${(px * 100).toFixed(1)}%`);
       node.style.setProperty('--mc-shine-y', `${(py * 100).toFixed(1)}%`);
     });
-  }, [compact, selectionMode]);
+  }, [compact, performanceMode, selectionMode]);
 
   const handlePointerLeave = useCallback(() => {
     if (pointerRafRef.current != null) {
@@ -105,10 +106,10 @@ const MangaCard = memo(function MangaCard({
   const progressPercent = manga.progressPercent ?? 0;
   const stateLabel = manga.isRead ? 'Lu' : progressPercent > 0 ? 'En cours' : null;
   const allTags = manga.tags || [];
-  const visibleTags = compact ? [] : allTags.slice(0, 3);
+  const visibleTags = compact || performanceMode ? [] : allTags.slice(0, 3);
   const extraCount = Math.max(0, allTags.length - 3);
   const infoFragments = [`${manga.chapterCount} ch.`];
-  if (!compact && manga.author) infoFragments.push(manga.author);
+  if (!compact && !performanceMode && manga.author) infoFragments.push(manga.author);
   if (progressPercent > 0) infoFragments.push(`${progressPercent}%`);
 
   return (
@@ -117,6 +118,7 @@ const MangaCard = memo(function MangaCard({
       className={[
         'mc',
         compact ? 'mc-compact' : '',
+        performanceMode ? 'mc-performance mc-compact' : '',
         selectionMode ? 'mc-select-mode' : '',
         selected ? 'mc-selected' : '',
         privateBlur ? 'mc-private' : ''
@@ -128,15 +130,20 @@ const MangaCard = memo(function MangaCard({
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
     >
-      <div className="mc-chrome" aria-hidden="true" />
-      <div className="mc-rim" aria-hidden="true" />
-      <div className="mc-ambient" aria-hidden="true" />
+      {!performanceMode ? (
+        <>
+          <div className="mc-chrome" aria-hidden="true" />
+          <div className="mc-rim" aria-hidden="true" />
+          <div className="mc-ambient" aria-hidden="true" />
+        </>
+      ) : null}
 
       <div className="mc-cover-shell">
         <div className="mc-cover">
           {manga.coverSrc || manga.coverMediaType === 'pdf' ? (
             <MediaAsset
               src={manga.coverSrc}
+              thumbnail
               alt={manga.displayTitle}
               loading="lazy"
               draggable={false}
@@ -151,9 +158,13 @@ const MangaCard = memo(function MangaCard({
             <div className="mc-cover-fallback">{(manga.displayTitle || '?')[0]}</div>
           )}
 
-          <div className="mc-cover-glow" aria-hidden="true" />
-          <div className="mc-cover-shade" aria-hidden="true" />
-          <div className="mc-cover-border" aria-hidden="true" />
+          {!performanceMode ? (
+            <>
+              <div className="mc-cover-glow" aria-hidden="true" />
+              <div className="mc-cover-shade" aria-hidden="true" />
+              <div className="mc-cover-border" aria-hidden="true" />
+            </>
+          ) : null}
 
           {progressPercent > 0 && !manga.isRead ? (
             <div className="mc-progress">
@@ -210,7 +221,7 @@ const MangaCard = memo(function MangaCard({
           ))}
         </div>
 
-        {manga.sourceWeb?.linked && !compact && !selectionMode ? (
+        {manga.sourceWeb?.linked && !compact && !performanceMode && !selectionMode ? (
           <div className="mc-source-row">
             <div className="mc-source-copy">
               <strong>{manga.sourceWeb.sourceLabel || 'Source web'}</strong>

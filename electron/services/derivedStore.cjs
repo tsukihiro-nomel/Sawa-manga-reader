@@ -890,6 +890,30 @@ function listVisualHashes() {
   }));
 }
 
+function buildFtsPrefixQuery(query) {
+  const tokens = String(query || '').match(/[\p{L}\p{N}_]+/gu) || [];
+  return tokens
+    .map((token) => `"${token.replace(/"/g, '""')}"*`)
+    .join(' AND ');
+}
+
+function searchDocumentsWithLike(db, needle, limit) {
+  const fallbackNeedle = String(needle || '').toLowerCase();
+  return db.prepare(`
+    SELECT id, item_content_id, item_location_id, doc_type, title, body
+    FROM search_documents
+    WHERE lower(coalesce(title, '') || ' ' || coalesce(body, '')) LIKE ?
+    LIMIT ?
+  `).all(`%${fallbackNeedle}%`, Math.max(1, limit)).map((row) => ({
+    id: row.id,
+    itemContentId: row.item_content_id,
+    itemLocationId: row.item_location_id,
+    docType: row.doc_type,
+    title: row.title,
+    body: row.body
+  }));
+}
+
 function searchDocuments(query, limit = 50) {
   const needle = String(query || '').trim();
   if (!needle) return [];
@@ -902,36 +926,25 @@ function searchDocuments(query, limit = 50) {
   }
 
   const db = getDatabase();
+  const ftsQuery = buildFtsPrefixQuery(needle);
   try {
-    return db.prepare(`
+    const results = ftsQuery ? db.prepare(`
       SELECT fts.id, docs.item_content_id, docs.item_location_id, docs.doc_type, docs.title, docs.body
       FROM search_documents_fts AS fts
       JOIN search_documents AS docs ON docs.id = fts.id
       WHERE search_documents_fts MATCH ?
       LIMIT ?
-    `).all(needle, Math.max(1, limit)).map((row) => ({
+    `).all(ftsQuery, Math.max(1, limit)).map((row) => ({
       id: row.id,
       itemContentId: row.item_content_id,
       itemLocationId: row.item_location_id,
       docType: row.doc_type,
       title: row.title,
       body: row.body
-    }));
+    })) : [];
+    return results.length > 0 ? results : searchDocumentsWithLike(db, needle, limit);
   } catch (_error) {
-    const fallbackNeedle = needle.toLowerCase();
-    return db.prepare(`
-      SELECT id, item_content_id, item_location_id, doc_type, title, body
-      FROM search_documents
-      WHERE lower(title || ' ' || body) LIKE ?
-      LIMIT ?
-    `).all(`%${fallbackNeedle}%`, Math.max(1, limit)).map((row) => ({
-      id: row.id,
-      itemContentId: row.item_content_id,
-      itemLocationId: row.item_location_id,
-      docType: row.doc_type,
-      title: row.title,
-      body: row.body
-    }));
+    return searchDocumentsWithLike(db, needle, limit);
   }
 }
 
@@ -967,6 +980,7 @@ module.exports = {
   clearOcrData,
   upsertVisualHash,
   listVisualHashes,
+  buildFtsPrefixQuery,
   searchDocuments,
   closeDerivedStore
 };

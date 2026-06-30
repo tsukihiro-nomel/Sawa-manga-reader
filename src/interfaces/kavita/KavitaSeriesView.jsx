@@ -12,6 +12,7 @@ import {
   Tag
 } from 'lucide-react';
 import MediaAsset from '../../components/MediaAsset.jsx';
+import { paginateItems } from '../../utils/paginateItems.js';
 import { resolveTabOpenIntent } from './tabInteractions.js';
 
 function formatDuration(pageCount) {
@@ -108,7 +109,12 @@ function KavitaSeriesView({
   onContextMenu
 }) {
   const [tab, setTab] = useState('storyline');
+  const [chapterPage, setChapterPage] = useState(0);
   const chapters = manga.chapters || [];
+  const chapterPagination = useMemo(
+    () => paginateItems(chapters, chapterPage, 60),
+    [chapterPage, chapters]
+  );
   const pageCount = useMemo(
     () => chapters.reduce((total, chapter) => total + Number(chapter.pageCount || chapter.pages?.length || 0), 0),
     [chapters]
@@ -214,17 +220,24 @@ function KavitaSeriesView({
       <div className="kv-detail-content">
         {tab === 'storyline' || tab === 'chapters' ? (
           <div className="kv-chapter-grid">
-            {chapters.map((chapter, index) => (
+            {chapterPagination.items.map((chapter, index) => (
               <ChapterTile
                 key={chapter.id}
                 manga={manga}
                 chapter={chapter}
-                index={index}
+                index={chapterPagination.start + index}
                 onOpen={onOpenChapter}
                 onOpenInNewTab={onOpenChapterInNewTab}
                 onContextMenu={onContextMenu}
               />
             ))}
+            {chapterPagination.totalPages > 1 ? (
+              <div className="kv-chapter-pagination" aria-label="Pagination des chapitres">
+                <button type="button" disabled={chapterPagination.page === 0} onClick={() => setChapterPage((page) => Math.max(0, page - 1))}>Precedents</button>
+                <span>{chapterPagination.start + 1}-{chapterPagination.end} sur {chapters.length}</span>
+                <button type="button" disabled={chapterPagination.page >= chapterPagination.totalPages - 1} onClick={() => setChapterPage((page) => Math.min(chapterPagination.totalPages - 1, page + 1))}>Suivants</button>
+              </div>
+            ) : null}
           </div>
         ) : null}
         {tab === 'specials' ? <div className="kv-flat-message">Les chapitres speciaux apparaitront ici lorsqu ils seront detectes.</div> : null}

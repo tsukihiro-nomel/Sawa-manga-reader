@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { resolveSmartCollection } from '../utils/reader.js';
-import MangaCard from './MangaCard.jsx';
+import VirtualMangaGrid from './VirtualMangaGrid.jsx';
 import MediaAsset from './MediaAsset.jsx';
 import {
   ArchiveIcon,
@@ -391,20 +391,16 @@ function CollectionDetailView({
           <p>Ajoute des mangas depuis le menu contextuel ou ajuste les regles de cette vue intelligente.</p>
         </div>
       ) : (
-        <div className="collection-manga-grid">
-          {mangas.map((manga) => (
-            <MangaCard
-              key={manga.id}
-              manga={manga}
-              onOpen={onOpenManga}
-              onToggleFavorite={onToggleFavorite}
-              onContextMenu={onContextMenu}
-              selectionMode={selectionMode}
-              selected={selectedIds.has(manga.id)}
-              onToggleSelect={onToggleSelect}
-            />
-          ))}
-        </div>
+        <VirtualMangaGrid
+          mangas={mangas}
+          className="collection-manga-grid-virtual"
+          onOpen={onOpenManga}
+          onToggleFavorite={onToggleFavorite}
+          onContextMenu={onContextMenu}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
+        />
       )}
     </div>
   );
@@ -560,7 +556,7 @@ function CollectionsView({
         manualCollections.length === 0 ? (
           <div className="empty-card">
             <h3>Aucune collection manuelle</h3>
-            <p>Crée une premiere collection pour ranger tes mangas par humeur, univers ou priorite.</p>
+            <p>CrÃ©e une premiere collection pour ranger tes mangas par humeur, univers ou priorite.</p>
           </div>
         ) : (
           <div className="collection-showcase-grid">

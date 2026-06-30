@@ -64,6 +64,7 @@ function HeroCarousel({ mangas, onOpen, onContextMenu }) {
                 {manga.coverSrc || manga.coverMediaType === 'pdf' ? (
                   <MediaAsset
                     src={manga.coverSrc}
+                    thumbnail
                     alt={manga.displayTitle}
                     loading="lazy"
                     className="thumb-smooth thumb-media"
@@ -107,6 +108,7 @@ function LibraryView({
   const containerRef = useRef(null);
   const restoredRef = useRef(false);
   const savingBlockedRef = useRef(false);
+  const performanceMode = mangas.length >= 150;
   const minCard = cardSize === 'compact' ? 180 : cardSize === 'large' ? 320 : 240;
   const [columns, setColumns] = useState(5);
 
@@ -136,8 +138,7 @@ function LibraryView({
     count: rows.length,
     getScrollElement: () => containerRef.current,
     estimateSize: () => rowHeight,
-    overscan: 4,
-    measureElement: (element) => element?.getBoundingClientRect().height ?? rowHeight
+    overscan: performanceMode ? 0 : 1
   });
 
   useLayoutEffect(() => {
@@ -207,7 +208,6 @@ function LibraryView({
           {virtualizer.getVirtualItems().map((virtualRow) => (
             <div
               key={virtualRow.key}
-              ref={virtualizer.measureElement}
               data-index={virtualRow.index}
               className="manga-grid-row"
               style={{
@@ -215,6 +215,7 @@ function LibraryView({
                 top: 0,
                 left: 0,
                 width: '100%',
+                height: `${rowHeight}px`,
                 transform: `translateY(${virtualRow.start}px)`,
                 '--grid-columns': columns
               }}
@@ -231,6 +232,7 @@ function LibraryView({
                   selectionMode={selectionMode}
                   selected={selectedIds.has(manga.id)}
                   onToggleSelect={onToggleSelect}
+                  performanceMode={performanceMode}
                 />
               ))}
             </div>

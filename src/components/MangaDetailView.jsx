@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { ChevronLeftIcon, EditIcon, HeartIcon, LayersIcon, PlayIcon, PlusIcon, ScrollIcon, SearchIcon, SparklesIcon, TagIcon, BookIcon, ClockIcon, ZapIcon } from './Icons.jsx';
 import MediaAsset from './MediaAsset.jsx';
 import { getProgressPercent } from '../utils/reader.js';
+import { paginateItems } from '../utils/paginateItems.js';
 
 // ---------------------------------------------------------------------------
 // Scroll restoration
@@ -229,7 +230,7 @@ function MangaDetailView({
 }) {
   const containerRef = useRef(null);
   const [showOnlineSearch, setShowOnlineSearch] = useState(false);
-  const [chaptersExpanded, setChaptersExpanded] = useState(false);
+  const [chapterPage, setChapterPage] = useState(0);
   const [chapterSort, setChapterSort] = useState('asc'); // 'asc' | 'desc'
 
   useEffect(() => () => {
@@ -264,7 +265,15 @@ function MangaDetailView({
     return manga.chapters;
   }, [manga.chapters, chapterSort]);
 
-  const displayedChapters = chaptersExpanded ? sortedChapters : sortedChapters.slice(0, 30);
+  const chapterPagination = useMemo(
+    () => paginateItems(sortedChapters, chapterPage, 50),
+    [chapterPage, sortedChapters]
+  );
+  const displayedChapters = chapterPagination.items;
+
+  useEffect(() => {
+    setChapterPage(0);
+  }, [chapterSort, manga.id]);
   const sortedAnnotations = useMemo(
     () => [...(annotations || [])].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()),
     [annotations]
@@ -569,7 +578,8 @@ function MangaDetailView({
 
         <div className="chapter-grid">
           {displayedChapters.map((chapter, index) => {
-            const realIndex = chapterSort === 'desc' ? totalChapters - 1 - index : index;
+            const absoluteIndex = chapterPagination.start + index;
+            const realIndex = chapterSort === 'desc' ? totalChapters - 1 - absoluteIndex : absoluteIndex;
             return (
               <button
                 key={chapter.id}
@@ -607,11 +617,13 @@ function MangaDetailView({
           })}
         </div>
 
-        {sortedChapters.length > 30 && !chaptersExpanded && (
-          <button className="ghost-button detail-show-all-chapters" onClick={() => setChaptersExpanded(true)}>
-            Afficher les {sortedChapters.length - 30} chapitres restants
-          </button>
-        )}
+        {chapterPagination.totalPages > 1 ? (
+          <div className="chapter-pagination" aria-label="Pagination des chapitres">
+            <button type="button" className="ghost-button" disabled={chapterPagination.page === 0} onClick={() => setChapterPage((page) => Math.max(0, page - 1))}>Precedents</button>
+            <span>{chapterPagination.start + 1}-{chapterPagination.end} sur {sortedChapters.length}</span>
+            <button type="button" className="ghost-button" disabled={chapterPagination.page >= chapterPagination.totalPages - 1} onClick={() => setChapterPage((page) => Math.min(chapterPagination.totalPages - 1, page + 1))}>Suivants</button>
+          </div>
+        ) : null}
       </div>
 
       {showOnlineSearch && (

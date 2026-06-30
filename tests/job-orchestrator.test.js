@@ -66,4 +66,61 @@ describe('JobOrchestrator', () => {
     expect(jobs.get(scanJob.id).status).toBe('done');
     expect(executed).toContain('scan');
   });
+
+  it('keeps scan jobs queued while the reader is active', async () => {
+    const jobs = new Map();
+    const fakeStore = {
+      getJob: (jobId) => jobs.get(jobId) || null,
+      listJobs: () => [...jobs.values()],
+      upsertJob: (job) => {
+        jobs.set(job.id, job);
+        return job;
+      },
+      markRunningJobsInterrupted: () => []
+    };
+    const { JobOrchestrator } = loadWithFakeStore(fakeStore);
+    const executed = [];
+    const orchestrator = new JobOrchestrator({
+      handlers: { scan: async () => executed.push('scan') }
+    });
+
+    orchestrator.setReaderActive(true);
+    const job = orchestrator.enqueue({ kind: 'scan' });
+    await orchestrator.process();
+
+    expect(executed).toEqual([]);
+    expect(jobs.get(job.id).status).toBe('queued');
+
+    orchestrator.setReaderActive(false);
+    await orchestrator.process();
+    expect(executed).toEqual(['scan']);
+  });
+
+  it('waits for a short interaction quiet period before watcher scans', async () => {
+    const jobs = new Map();
+    const fakeStore = {
+      getJob: (jobId) => jobs.get(jobId) || null,
+      listJobs: () => [...jobs.values()],
+      upsertJob: (job) => {
+        jobs.set(job.id, job);
+        return job;
+      },
+      markRunningJobsInterrupted: () => []
+    };
+    const { JobOrchestrator } = loadWithFakeStore(fakeStore);
+    const executed = [];
+    const orchestrator = new JobOrchestrator({
+      profile: 'balanced',
+      handlers: { scan: async () => executed.push('scan') }
+    });
+
+    orchestrator.markInteraction();
+    orchestrator.enqueue({ kind: 'scan', payload: { source: 'watcher' } });
+    await orchestrator.process();
+    expect(executed).toEqual([]);
+
+    orchestrator.lastInteractionAt -= 2_000;
+    await orchestrator.process();
+    expect(executed).toEqual(['scan']);
+  });
 });
