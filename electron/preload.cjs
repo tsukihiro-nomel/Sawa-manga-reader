@@ -4,18 +4,31 @@ const invoke = (...args) => ipcRenderer.invoke(...args);
 
 contextBridge.exposeInMainWorld('mangaAPI', {
   bootstrap: () => invoke('app:bootstrap'),
+  reloadApp: () => invoke('app:reload'),
+  restartApp: (options) => invoke('app:restart', options),
+  openDiagnostics: () => invoke('app:openDiagnostics'),
+  copyDiagnostics: (input) => invoke('app:copyDiagnostics', input),
   getCompactIndex: () => invoke('app:getCompactIndex'),
   signalBootReady: () => ipcRenderer.send('app:boot-ready'),
   markInteraction: () => ipcRenderer.send('app:mark-interaction'),
+  reportPerformanceEntry: (entry) => ipcRenderer.send('app:perf-event', entry),
   setReaderActive: (active) => ipcRenderer.send('reader:set-active', active),
 
   addCategories: () => invoke('library:addCategories'),
   removeCategory: (categoryId) => invoke('library:removeCategory', categoryId),
   trashManga: (mangaId) => invoke('library:trashManga', mangaId),
+  bulkTrashMangas: (mangaIds) => invoke('library:bulkTrashMangas', mangaIds),
   toggleCategoryHidden: (categoryId) => invoke('library:toggleCategoryHidden', categoryId),
   getChapterPages: (chapterPath) => invoke('library:getChapterPages', chapterPath),
   readPdfData: (filePath) => invoke('library:readPdfData', filePath),
+  openMediaSource: (filePath) => invoke('media:openSource', filePath),
+  reportMediaFailure: (input) => invoke('media:reportFailure', input),
   pickCover: (mangaId) => invoke('library:pickCover', mangaId),
+  listCovers: (mangaId) => invoke('covers:list', mangaId),
+  importCover: (mangaId) => invoke('covers:import', mangaId),
+  adoptCoverCandidate: (input) => invoke('covers:adoptCandidate', input),
+  selectCover: (input) => invoke('covers:select', input),
+  updateCoverCrop: (input) => invoke('covers:updateCrop', input),
   updateMetadata: (mangaId, patch) => invoke('library:updateMetadata', mangaId, patch),
   toggleFavorite: (mangaId) => invoke('library:toggleFavorite', mangaId),
   toggleFavoriteLight: (mangaId) => invoke('library:toggleFavoriteLight', mangaId),
@@ -60,8 +73,9 @@ contextBridge.exposeInMainWorld('mangaAPI', {
   toggleMangaTag: (mangaId, tagId) => invoke('tags:toggleForManga', mangaId, tagId),
   toggleMangaTagLight: (mangaId, tagId) => invoke('tags:toggleForMangaLight', mangaId, tagId),
   addTagToMany: (tagId, mangaIds) => invoke('tags:addMany', tagId, mangaIds),
+  removeTagFromMany: (tagId, mangaIds) => invoke('tags:removeMany', tagId, mangaIds),
 
-  createCollection: (name, description, color) => invoke('collections:create', name, description, color),
+  createCollection: (name, description, color, appearance) => invoke('collections:create', name, description, color, appearance),
   deleteCollection: (collectionId) => invoke('collections:delete', collectionId),
   updateCollection: (collectionId, patch) => invoke('collections:update', collectionId, patch),
   addMangaToCollection: (collectionId, mangaId) => invoke('collections:addManga', collectionId, mangaId),
@@ -69,6 +83,7 @@ contextBridge.exposeInMainWorld('mangaAPI', {
   removeMangaFromCollection: (collectionId, mangaId) => invoke('collections:removeManga', collectionId, mangaId),
   removeMangaFromCollectionLight: (collectionId, mangaId) => invoke('collections:removeMangaLight', collectionId, mangaId),
   addManyToCollection: (collectionId, mangaIds) => invoke('collections:addMany', collectionId, mangaIds),
+  removeManyFromCollection: (collectionId, mangaIds) => invoke('collections:removeMany', collectionId, mangaIds),
   saveSmartCollection: (collection) => invoke('smartCollections:save', collection),
   deleteSmartCollection: (collectionId) => invoke('smartCollections:delete', collectionId),
 
@@ -115,6 +130,12 @@ contextBridge.exposeInMainWorld('mangaAPI', {
   rebuildIndex: () => invoke('maintenance:rebuildIndex'),
   getStats: (options) => invoke('maintenance:getStats', options),
   getDuplicateCandidates: () => invoke('maintenance:getDuplicateCandidates'),
+  listIdentitySuggestions: () => invoke('identity:listSuggestions'),
+  analyzeIdentities: () => invoke('identity:analyze'),
+  decideIdentitySuggestion: (suggestionId, decision) => invoke('identity:decideSuggestion', { suggestionId, decision }),
+  groupEditions: (mangaIds, options = {}) => invoke('works:groupEditions', { mangaIds, ...options }),
+  ungroupEditions: (groupId) => invoke('works:ungroup', groupId),
+  setPreferredEdition: (groupId, mangaId) => invoke('works:setPreferredEdition', { groupId, mangaId }),
   rebuildDerivedData: () => invoke('maintenance:rebuildDerivedData'),
   listJobs: () => invoke('jobs:list'),
   cancelJob: (jobId) => invoke('jobs:cancel', jobId),
@@ -170,5 +191,15 @@ contextBridge.exposeInMainWorld('mangaAPI', {
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on('library:syncStatusChanged', handler);
     return () => ipcRenderer.removeListener('library:syncStatusChanged', handler);
+  },
+  onStatePatch: (callback) => {
+    const handler = (_event, patch) => callback(patch);
+    ipcRenderer.on('state:patch', handler);
+    return () => ipcRenderer.removeListener('state:patch', handler);
+  },
+  onJobsProgress: (callback) => {
+    const handler = (_event, progress) => callback(progress);
+    ipcRenderer.on('jobs:progress', handler);
+    return () => ipcRenderer.removeListener('jobs:progress', handler);
   }
 });

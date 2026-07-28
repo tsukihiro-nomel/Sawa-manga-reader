@@ -42,6 +42,7 @@ function patchLibrarySnapshotInWorker(library = {}, options = {}, workerOptions 
         userDataPath: workerOptions.userDataPath || null
       }
     });
+    worker.unref?.();
     let settled = false;
 
     const finish = (callback, value) => {

@@ -4,7 +4,7 @@ import { runOptimisticAction } from './kavitaState.js';
 
 const TAG_COLORS = ['#ef6262', '#ef9a43', '#d8bd42', '#45b979', '#4f93df', '#9271df', '#d15d9b', '#3db9b0'];
 
-function MetadataEditor({ manga, onSave }) {
+function MetadataEditor({ manga, onSave, onOpenCover }) {
   const [form, setForm] = useState({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -47,7 +47,10 @@ function MetadataEditor({ manga, onSave }) {
       </div>
       <label><span>Description</span><textarea rows="7" value={form.description || ''} onChange={(event) => setForm((value) => ({ ...value, description: event.target.value }))} /></label>
       {error ? <p className="kv-editor-error" role="alert">{error}</p> : null}
-      <button type="submit" className="kv-primary-action" disabled={pending}>{pending ? 'Enregistrement...' : 'Enregistrer'}</button>
+      <div className="kv-editor-actions">
+        <button type="button" onClick={onOpenCover}>Gérer la couverture</button>
+        <button type="submit" className="kv-primary-action" disabled={pending}>{pending ? 'Enregistrement...' : 'Enregistrer'}</button>
+      </div>
     </form>
   );
 }
@@ -225,7 +228,8 @@ export default function KavitaEditorDialog({
   onDeleteTag,
   onAddToCollection,
   onRemoveFromCollection,
-  onCreateCollection
+  onCreateCollection,
+  onOpenCover
 }) {
   if (!editor || !manga) return null;
   const title = editor.type === 'metadata' ? 'Modifier les metadata' : editor.type === 'tags' ? 'Gerer les tags' : 'Gerer les collections';
@@ -238,7 +242,16 @@ export default function KavitaEditorDialog({
           <button type="button" className="kv-icon-button" onClick={onClose}><X size={18} /></button>
         </header>
         <div className="kv-editor-content">
-          {editor.type === 'metadata' ? <MetadataEditor manga={manga} onSave={async (...args) => { await onSaveMetadata?.(...args); onClose(); }} /> : null}
+          {editor.type === 'metadata' ? (
+            <MetadataEditor
+              manga={manga}
+              onOpenCover={() => {
+                onClose();
+                onOpenCover?.(manga.id);
+              }}
+              onSave={async (...args) => { await onSaveMetadata?.(...args); onClose(); }}
+            />
+          ) : null}
           {editor.type === 'tags' ? (
             <TagEditor manga={manga} tags={tags} onToggleTag={onToggleTag} onCreateTag={onCreateTag} onDeleteTag={onDeleteTag} />
           ) : null}

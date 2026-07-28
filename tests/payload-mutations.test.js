@@ -4,7 +4,12 @@ import {
   applyCollectionMutation,
   applyFavoriteMutation,
   applyMangaReadMutation,
-  applyTagMutation
+  applyReaderProgressMutation,
+  applyTagMutation,
+  captureReadMutationSnapshot,
+  restoreReadMutationSnapshot,
+  captureReaderProgressSnapshot,
+  restoreReaderProgressSnapshot
 } from '../src/utils/payloadMutations.js';
 
 function makePayload() {
@@ -81,5 +86,47 @@ describe('light payload mutations', () => {
       completedChapterCount: 2,
       progressPercent: 100
     });
+  });
+
+  it('restores only reading fields from an inverse snapshot', () => {
+    const initial = makePayload();
+    const snapshot = captureReadMutationSnapshot(initial, 'manga-1', ['chapter-1']);
+    let next = applyChapterReadMutation(initial, 'manga-1', 'chapter-1', true, 10);
+    next = applyFavoriteMutation(next, 'manga-1', true);
+    next = restoreReadMutationSnapshot(next, snapshot);
+
+    expect(next.library.allMangas[0]).toMatchObject({
+      isFavorite: true,
+      isRead: false,
+      readingState: 'never',
+      progressPercent: 0
+    });
+    expect(next.library.allMangas[0].chapters[0]).toMatchObject({
+      isRead: false,
+      readingState: 'never',
+      progress: null
+    });
+  });
+
+  it('rolls reader progress back without reverting an unrelated favorite mutation', () => {
+    const initial = makePayload();
+    const progress = {
+      mangaId: 'manga-1',
+      chapterId: 'chapter-1',
+      pageIndex: 5,
+      pageCount: 10,
+      mode: 'single',
+      fitMode: 'fit-width',
+      zoom: 1.1
+    };
+    const snapshot = captureReaderProgressSnapshot(initial, progress);
+    let next = applyReaderProgressMutation(initial, progress, { now: '2026-07-27T10:00:00.000Z' });
+    next = applyFavoriteMutation(next, 'manga-1', true);
+    next = restoreReaderProgressSnapshot(next, snapshot);
+
+    expect(next.library.allMangas[0].isFavorite).toBe(true);
+    expect(next.library.allMangas[0].chapters[0].progress).toBeNull();
+    expect(next.persisted.progress['chapter-1']).toBeUndefined();
+    expect(next.persisted.recents).toEqual([]);
   });
 });

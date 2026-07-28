@@ -36,9 +36,39 @@ describe('performance diagnostics', () => {
     const measurements = diagnostics.getMeasurements();
     expect(measurements).toHaveLength(1);
     expect(measurements[0]).toMatchObject({
+      kind: 'library.payload',
       name: 'library.payload',
       payloadBytes: expect.any(Number)
     });
     expect(measurements[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('removes filesystem paths from diagnostic metadata', () => {
+    const diagnostics = loadDiagnostics(true);
+    diagnostics.recordMeasurement('media.pdf.readFile', 12, {
+      filePath: 'C:\\Users\\person\\private.pdf',
+      fileBytes: 2048,
+      source: 'renderer'
+    });
+    expect(diagnostics.getMeasurements()[0]).toMatchObject({
+      kind: 'media.pdf.readFile',
+      fileBytes: 2048,
+      source: 'renderer'
+    });
+    expect(diagnostics.getMeasurements()[0]).not.toHaveProperty('filePath');
+  });
+
+  it('supports a runtime diagnostic mode with a bounded snapshot', () => {
+    const diagnostics = loadDiagnostics(false);
+    diagnostics.configurePerfDiagnostics(true);
+    for (let index = 0; index < 240; index += 1) {
+      diagnostics.recordMeasurement('renderer.longtask', index, { source: 'renderer' });
+    }
+
+    const snapshot = diagnostics.getDiagnosticsSnapshot();
+    expect(snapshot.enabled).toBe(true);
+    expect(snapshot.measurements).toHaveLength(200);
+    expect(snapshot.eventLoop).toMatchObject({ p95Ms: expect.any(Number) });
+    diagnostics.configurePerfDiagnostics(false);
   });
 });

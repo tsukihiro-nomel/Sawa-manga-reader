@@ -89,7 +89,11 @@ function KavitaVaultView({
   onToggleFavorite,
   onContextMenu,
   onToggleBlur,
-  onToggleStealth
+  onToggleStealth,
+  scrollKey = '',
+  initialScrollPosition = null,
+  initialScrollTop = 0,
+  onScrollPositionChange
 }) {
   if (!vault?.configured) {
     return (
@@ -153,6 +157,10 @@ function KavitaVaultView({
           onToggleSelect={onToggleSelect}
           onContextMenu={onContextMenu}
           privateBlur={Boolean(vault.blurCovers)}
+          scrollKey={scrollKey}
+          initialScrollPosition={initialScrollPosition}
+          initialScrollTop={initialScrollTop}
+          onScrollPositionChange={onScrollPositionChange}
         />
       </div>
     </section>

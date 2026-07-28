@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { buildComicInfoXml, writeComicInfoSidecar } = require('../electron/services/comicInfo.cjs');
+const {
+  buildComicInfoExportRecord,
+  buildComicInfoXml,
+  writeComicInfoSidecar
+} = require('../electron/services/comicInfo.cjs');
 
 const tempDirs = [];
 
@@ -45,5 +49,26 @@ describe('ComicInfo service', () => {
     expect(result.path).toBe(targetPath);
     expect(fs.existsSync(targetPath)).toBe(true);
     expect(fs.readFileSync(targetPath, 'utf8')).toContain('<Number>12</Number>');
+  });
+
+  it('builds chapter-specific XML without losing the manga series metadata', () => {
+    const record = buildComicInfoExportRecord({
+      displayTitle: 'Serie principale',
+      number: '99',
+      volume: '8',
+      author: 'Auteure locale',
+      tags: [{ name: 'Action' }]
+    }, {
+      title: 'Chapitre 7',
+      number: '7',
+      volume: '2'
+    });
+    const xml = buildComicInfoXml(record);
+
+    expect(xml).toContain('<Series>Serie principale</Series>');
+    expect(xml).toContain('<Title>Chapitre 7</Title>');
+    expect(xml).toContain('<Number>7</Number>');
+    expect(xml).toContain('<Volume>2</Volume>');
+    expect(xml).toContain('<Writer>Auteure locale</Writer>');
   });
 });

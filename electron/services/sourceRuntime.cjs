@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { getUserDataStoreDir, getCacheDir } = require('./storage.cjs');
+const { createAtomicJsonPersistence } = require('./atomicJsonPersistence.cjs');
 const suwayomiRuntime = require('./suwayomiRuntime.cjs');
 
 const SOURCE_PLUGIN_ID = 'sources-web';
@@ -43,6 +44,11 @@ const DEFAULT_SOURCE_STATE = Object.freeze({
   recentSeries: [],
   pinnedConnectors: []
 });
+const sourcePersistence = createAtomicJsonPersistence({ maxConcurrent: 1 });
+let cachedSourcesPath = '';
+let cachedSourcesState = null;
+let cachedSourcesJson = '';
+let queuedSourcesJson = '';
 
 function nowIso() {
   return new Date().toISOString();
@@ -362,7 +368,7 @@ function findSeriesLinkIndex(entries = [], candidate = {}) {
   });
 }
 
-function upsertDraftSeriesLink(draft, linkInput = {}) {
+function upsertDraftSeriesLink(draft, linkInput = {}, options = {}) {
   const normalized = normalizeSeriesLink(linkInput);
   if (!normalized) return;
   const linkIndex = findSeriesLinkIndex(draft.seriesLinks, normalized);
@@ -373,7 +379,9 @@ function upsertDraftSeriesLink(draft, linkInput = {}) {
     ...normalized,
     ...chapterState,
     sourceLabel: normalizeString(normalized.sourceLabel, normalizeString(current?.sourceLabel, 'Source web')),
-    updatedAt: nowIso()
+    updatedAt: options.touch === false
+      ? normalizeString(normalized.updatedAt, current?.updatedAt)
+      : nowIso()
   });
   if (!merged) return;
   if (linkIndex >= 0) {
@@ -428,19 +436,47 @@ function buildSeriesLinkFromProvenance(manga = {}, existingLink = null) {
   });
 }
 
-function buildSeriesLinkFromImportHistory(manga = {}, existingLink = null) {
+function collectNormalizedPathAncestors(value) {
+  const normalized = normalizePathString(value);
+  if (!normalized) return [];
+  const ancestors = [];
+  let current = normalized;
+  while (current) {
+    ancestors.push(current);
+    const parent = current.replace(/\\[^\\]+$/, '');
+    if (!parent || parent === current || /^[a-z]:$/i.test(parent)) break;
+    current = parent;
+  }
+  return ancestors;
+}
+
+function buildImportHistoryPathIndex(importHistory = []) {
+  const index = new Map();
+  (Array.isArray(importHistory) ? importHistory : []).forEach((record) => {
+    collectNormalizedPathAncestors(record?.localPath).forEach((candidatePath) => {
+      const records = index.get(candidatePath) || [];
+      records.push(record);
+      index.set(candidatePath, records);
+    });
+  });
+  return index;
+}
+
+function buildSeriesLinkFromImportHistory(manga = {}, existingLink = null, importHistory = [], pathIndex = null) {
   const normalizedSeriesPath = normalizePathString(manga?.path);
   if (!normalizedSeriesPath) return null;
 
-  const matchingRecords = loadSourcesState().importHistory.filter((record) => {
-    const localPath = normalizePathString(record?.localPath);
-    if (!localPath) return false;
-    return (
-      localPath === normalizedSeriesPath
-      || localPath.startsWith(`${normalizedSeriesPath}\\`)
-      || normalizedSeriesPath.startsWith(`${localPath}\\`)
-    );
-  });
+  const matchingRecords = pathIndex instanceof Map
+    ? [...new Set(pathIndex.get(normalizedSeriesPath) || [])]
+    : (Array.isArray(importHistory) ? importHistory : []).filter((record) => {
+        const localPath = normalizePathString(record?.localPath);
+        if (!localPath) return false;
+        return (
+          localPath === normalizedSeriesPath
+          || localPath.startsWith(`${normalizedSeriesPath}\\`)
+          || normalizedSeriesPath.startsWith(`${localPath}\\`)
+        );
+      });
 
   if (!matchingRecords.length) return null;
 
@@ -838,27 +874,66 @@ function normalizeSourcesState(input = {}) {
 
 function loadSourcesState() {
   const statePath = getSourcesStatePath();
+  if (cachedSourcesState && cachedSourcesPath === statePath) return cachedSourcesState;
   const raw = readJsonSafe(statePath, DEFAULT_SOURCE_STATE);
   const normalized = normalizeSourcesState(raw);
   const normalizedJson = JSON.stringify(normalized, null, 2);
   const persistedJson = fs.existsSync(statePath)
     ? fs.readFileSync(statePath, 'utf8')
     : '';
-  if (!fs.existsSync(statePath) || persistedJson !== normalizedJson) {
-    saveSourcesState(normalized);
-  }
-  return normalized;
+  cachedSourcesPath = statePath;
+  cachedSourcesState = normalized;
+  cachedSourcesJson = persistedJson === normalizedJson ? normalizedJson : '';
+  queuedSourcesJson = '';
+  if (!fs.existsSync(statePath) || persistedJson !== normalizedJson) saveSourcesState(normalized);
+  return cachedSourcesState;
 }
 
 function saveSourcesState(nextState) {
   const normalized = normalizeSourcesState(nextState);
-  fs.writeFileSync(getSourcesStatePath(), JSON.stringify(normalized, null, 2), 'utf8');
-  return normalized;
+  const statePath = getSourcesStatePath();
+  const serialized = JSON.stringify(normalized, null, 2);
+  if (
+    cachedSourcesPath === statePath
+    && cachedSourcesState
+    && (cachedSourcesJson === serialized || queuedSourcesJson === serialized)
+  ) {
+    return cachedSourcesState;
+  }
+  cachedSourcesPath = statePath;
+  cachedSourcesState = normalized;
+  queuedSourcesJson = serialized;
+  sourcePersistence.schedule(statePath, serialized, {
+    onSuccess: ({ content }) => {
+      if (cachedSourcesPath !== statePath || queuedSourcesJson !== content) return;
+      queuedSourcesJson = '';
+      cachedSourcesJson = content;
+    }
+  });
+  return cachedSourcesState;
+}
+
+function invalidateSourcesStateCache() {
+  cachedSourcesPath = '';
+  cachedSourcesState = null;
+  cachedSourcesJson = '';
+  queuedSourcesJson = '';
+}
+
+async function flushSourcesStateWrites() {
+  const result = await sourcePersistence.flush();
+  if (!result.ok) console.error('[sources] persistence failed:', result.error);
+  return result.ok;
+}
+
+function getSourcesPersistenceStatus() {
+  return sourcePersistence.getStatus();
 }
 
 function updateSourcesState(updater) {
   const current = loadSourcesState();
   const next = updater(structuredClone(current));
+  if (JSON.stringify(next) === JSON.stringify(current)) return current;
   return saveSourcesState(next);
 }
 
@@ -2001,6 +2076,7 @@ function reconcileSeriesLinksWithLibrary(mangas = []) {
     const mangaByContentId = new Map();
     const mangaById = new Map();
     const mangaByPath = new Map();
+    const importHistoryPathIndex = buildImportHistoryPathIndex(draft.importHistory);
 
     safeMangas.forEach((manga) => {
       if (manga?.contentId) mangaByContentId.set(manga.contentId, manga);
@@ -2026,7 +2102,7 @@ function reconcileSeriesLinksWithLibrary(mangas = []) {
       );
       if (!needsProvenanceRefresh) return;
       const inferredLink = buildSeriesLinkFromProvenance(manga, existing)
-        || buildSeriesLinkFromImportHistory(manga, existing);
+        || buildSeriesLinkFromImportHistory(manga, existing, draft.importHistory, importHistoryPathIndex);
       if (inferredLink) {
         upsertDraftSeriesLink(draft, inferredLink);
       }
@@ -2048,10 +2124,16 @@ function reconcileSeriesLinksWithLibrary(mangas = []) {
       }) || entry;
     });
     const dedupedLinks = [];
-    draft.seriesLinks.forEach((entry) => {
-      upsertDraftSeriesLink({ seriesLinks: dedupedLinks }, entry);
+    [...draft.seriesLinks].reverse().forEach((entry) => {
+      upsertDraftSeriesLink({ seriesLinks: dedupedLinks }, entry, { touch: false });
     });
-    draft.seriesLinks = dedupedLinks;
+    draft.seriesLinks = dedupedLinks.sort((left, right) => {
+      const leftKey = left.localContentId || left.localMangaId || normalizePathString(left.localSeriesPath)
+        || `${left.connectorId}::${left.seriesId}`;
+      const rightKey = right.localContentId || right.localMangaId || normalizePathString(right.localSeriesPath)
+        || `${right.connectorId}::${right.seriesId}`;
+      return String(leftKey).localeCompare(String(rightKey));
+    });
     return draft;
   });
   return nextState.seriesLinks;
@@ -2097,6 +2179,9 @@ module.exports = {
   loadSourcesState,
   saveSourcesState,
   updateSourcesState,
+  invalidateSourcesStateCache,
+  flushSourcesStateWrites,
+  getSourcesPersistenceStatus,
   getSourcesStatePath,
   getSourceRuntimeCacheDir,
   getSourceRuntimeImportsDir,

@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -16,14 +17,18 @@ const {
   net,
   protocol,
   safeStorage,
-  shell
+  shell,
+  utilityProcess
 } = require('electron');
 const { pathToFileURL } = require('url');
 
 const {
   loadState,
+  activateRuntimeStateOverride,
+  normalizePersistedSessionPayload,
   updateState,
   createBackup,
+  exportBackup,
   importBackup,
   listBackups,
   createTag,
@@ -39,9 +44,29 @@ const {
   clearDerivedArtifacts,
   getDerivedDbPath,
   getThumbnailDir,
+  getManagedCoverDir,
   getUserDataPath,
-  flushStateWrites
+  flushStateWrites,
+  updateStateSegments
 } = require('./services/storage.cjs');
+const {
+  activeCoverPath,
+  mergeCoverVariants,
+  normalizeCollectionAppearance,
+  normalizeCoverProfile,
+  resolveCoverCandidatePath,
+  selectCoverVariant,
+  updateCoverCrop
+} = require('./services/coverManager.cjs');
+const {
+  sanitizePrivateMangaReferences,
+  sanitizeSessionSearchPrivacy
+} = require('./services/privacySanitizer.cjs');
+const {
+  bulkTrashMangas,
+  removeDeletedMangaState,
+  restoreReturnedTombstones
+} = require('./services/bulkTrash.cjs');
 
 const {
   scanLibrary,
@@ -54,7 +79,9 @@ const {
 } = require('./services/libraryScanner.cjs');
 const { scanLibraryInWorker } = require('./services/libraryScanWorker.cjs');
 const { patchLibrarySnapshotInWorker } = require('./services/derivedSyncWorker.cjs');
+const { reconcileSourceLinksInWorker } = require('./services/sourceLinkReconcileWorker.cjs');
 const {
+  applyPersistedOverlayToLibrary,
   buildInteractiveLibraryPayload
 } = require('./services/libraryOverlay.cjs');
 const {
@@ -68,6 +95,7 @@ const {
 
 const { LibraryWatcher } = require('./services/watcher.cjs');
 const { createThumbnailCache } = require('./services/thumbnailCache.cjs');
+const { createThumbnailUtilityPool } = require('./services/thumbnailUtilityClient.cjs');
 const {
   createCbzAssetResponse,
   clearCbzCache,
@@ -89,15 +117,41 @@ const {
   listVisualHashes,
   closeDerivedStore
 } = require('./services/derivedStore.cjs');
+const { runPrivacySafeAdvancedSearch } = require('./services/searchPrivacy.cjs');
 const {
   analyzeLegacySnapshot,
   getCoreStore,
   closeCoreStore
 } = require('./services/coreStore.cjs');
-const { JobOrchestrator } = require('./services/jobOrchestrator.cjs');
+const { JobInterruptedError, JobOrchestrator } = require('./services/jobOrchestrator.cjs');
 const { installTextContextMenu } = require('./services/textContextMenu.cjs');
-const { buildComicInfoXml, writeComicInfoSidecar } = require('./services/comicInfo.cjs');
 const {
+  buildComicInfoExportRecord,
+  buildComicInfoXml,
+  writeComicInfoSidecar
+} = require('./services/comicInfo.cjs');
+const {
+  runHeavyIoTask,
+  shutdownHeavyIoWorkers
+} = require('./services/heavyIoClient.cjs');
+const {
+  MAX_PDF_BYTES,
+  readAllowedPdfBuffer,
+  resolveAllowedPdfPath,
+  resolveRealPathWithinRoots
+} = require('./services/mediaFileAccess.cjs');
+const {
+  clearShutdownMarker,
+  flushWithDeadline,
+  getDiagnosticDir,
+  readLastValidSnapshot,
+  readShutdownMarker,
+  writeLastValidSnapshot,
+  writeShutdownMarker
+} = require('./services/appReliability.cjs');
+const {
+  configurePerfDiagnostics,
+  getDiagnosticsSnapshot,
   measureSync,
   recordMeasurement
 } = require('./services/perfDiagnostics.cjs');
@@ -137,10 +191,25 @@ const {
   setExtensionEnabled: setSourceExtensionEnabled,
   markRuntimeSelection: markSourceRuntimeSelection,
   loadSourcesState,
+  updateSourcesState,
+  invalidateSourcesStateCache,
+  flushSourcesStateWrites,
   listLinkedSeries,
-  reconcileSeriesLinksWithLibrary
 } = require('./services/sourceRuntime.cjs');
+const { createIdentityService } = require('./services/identityService.cjs');
+const {
+  remapPersistedReferences,
+  remapSourceLinks,
+  stripPrivateIdentityState
+} = require('./services/identityWorks.cjs');
 const { getOcrEngineInfo, listOcrLanguages, runOcrOnImage } = require('./services/ocrService.cjs');
+
+// Les profils fonctionnels et de benchmark doivent isoler aussi les caches Chromium,
+// pas seulement les fichiers metier lus par storage.cjs.
+const overriddenUserDataPath = String(process.env.SAWA_USER_DATA_PATH || '').trim();
+if (overriddenUserDataPath) {
+  app.setPath('userData', path.resolve(overriddenUserDataPath));
+}
 
 /* ------------------------------------------------------------------ */
 /*  Color extraction from image buffer                                 */
@@ -234,8 +303,21 @@ let interactiveDerivedSyncPromise = null;
 let interactiveDerivedSyncQueued = false;
 let libraryScanPromise = null;
 let thumbnailCache = null;
+let thumbnailUtilityPool = null;
 let legacySeriesIndex = [];
 let legacySeriesIndexReady = false;
+let stateRevision = 1;
+let sourceRevision = 1;
+let sourceReconcileTimer = null;
+let sourceReconcilePromise = null;
+let quitFlushInProgress = false;
+let quitFlushComplete = false;
+const safeModeEnabled = process.argv.includes('--sawa-safe-mode');
+const safeModeSnapshot = safeModeEnabled ? readLastValidSnapshot(getUserDataPath()) : null;
+const mediaFailureLastReported = new Map();
+if (safeModeSnapshot?.state) {
+  activateRuntimeStateOverride(safeModeSnapshot.state, { readOnly: true });
+}
 
 let pdfJsModulePromise = null;
 
@@ -247,7 +329,12 @@ function getScanEntries(scanIndex) {
 
 function requestLibraryScan(persistedState = loadState()) {
   if (!libraryScanPromise) {
-    libraryScanPromise = scanLibraryInWorker(persistedState, { userDataPath: getUserDataPath() })
+    const reusableSnapshot = rawLibrarySnapshot || readLibrarySnapshot();
+    libraryScanPromise = scanLibraryInWorker(persistedState, {
+      userDataPath: getUserDataPath(),
+      skipUnchanged: Boolean(reusableSnapshot)
+    })
+      .then((result) => (result?.unchanged ? reusableSnapshot : result))
       .finally(() => {
         libraryScanPromise = null;
       });
@@ -257,9 +344,14 @@ function requestLibraryScan(persistedState = loadState()) {
 
 function getThumbnailCache() {
   if (!thumbnailCache) {
+    thumbnailUtilityPool = createThumbnailUtilityPool({
+      forkImpl: utilityProcess.fork.bind(utilityProcess),
+      workerPath: path.join(__dirname, 'services', 'thumbnailUtilityWorker.cjs'),
+      maxConcurrent: 2
+    });
     thumbnailCache = createThumbnailCache({
       cacheDir: getThumbnailDir(),
-      nativeImageImpl: nativeImage,
+      generateThumbnail: (payload) => thumbnailUtilityPool.generateThumbnail(payload),
       maxConcurrent: 2
     });
   }
@@ -270,7 +362,8 @@ async function createThumbnailAssetResponse(sourcePath, url) {
   if (url.searchParams.get('thumbnail') !== '1') return null;
   const thumbnailPath = await getThumbnailCache().getOrCreate(sourcePath, {
     width: url.searchParams.get('w'),
-    height: url.searchParams.get('h')
+    height: url.searchParams.get('h'),
+    quality: url.searchParams.get('q')
   });
   return thumbnailPath ? net.fetch(pathToFileURL(thumbnailPath).toString()) : null;
 }
@@ -284,6 +377,29 @@ function updateSyncStatusPatch(patch = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('library:syncStatusChanged', latestSyncStatus);
   }
+  emitStatePatch({
+    syncState: {
+      status: latestSyncStatus.state,
+      lastSuccess: latestSyncStatus.lastCompletedAt || null,
+      error: latestSyncStatus.state === 'attention-needed' ? latestSyncStatus.detail : null
+    }
+  });
+}
+
+function emitStatePatch(patch = {}) {
+  stateRevision += 1;
+  if (!mainWindow || mainWindow.isDestroyed()) return stateRevision;
+  mainWindow.webContents.send('state:patch', {
+    revision: stateRevision,
+    sourceRevision,
+    patch
+  });
+  return stateRevision;
+}
+
+function mutationResult(patch = {}) {
+  const revision = stateRevision += 1;
+  return { ok: true, revision, patch, ...patch };
 }
 
 function normalizeHashBits(value) {
@@ -458,6 +574,32 @@ async function runSourceImportJob({ job, checkpoint, isCancelled }) {
   await jobOrchestrator.process();
 }
 
+async function runArchiveExportJob({ job, checkpoint, isCancelled }) {
+  const payload = job?.payload || {};
+  const result = await runHeavyIoTask('archive-export', {
+    sourcePath: payload.sourcePath,
+    targetPath: payload.targetPath,
+    xml: payload.xml,
+    conflictPolicy: payload.conflictPolicy,
+    replaceSource: payload.replaceSource
+  }, {
+    isCancelled,
+    onProgress: checkpoint
+  });
+  if (!result.ok) {
+    if (result.cancelled) throw new JobInterruptedError(result.error || 'Export annule.');
+    throw new Error(result.error || 'Export CBZ impossible.');
+  }
+  checkpoint({
+    phase: 'done',
+    percent: 100,
+    resultPath: result.path,
+    skipped: Boolean(result.skipped),
+    originalBackupPath: result.originalBackupPath || null,
+    imageCount: result.validation?.imageCount || 0
+  });
+}
+
 const jobOrchestrator = new JobOrchestrator({
   profile: normalizeJobProfile(loadState()?.ui?.experimental?.schedulerProfile),
   handlers: {
@@ -465,6 +607,8 @@ const jobOrchestrator = new JobOrchestrator({
     analyze: runLibraryJob,
     'deep-scan': runLibraryJob,
     'source-import': runSourceImportJob,
+    export: runArchiveExportJob,
+    'bulk-trash': runBulkTrashJob,
     ocr: runOcrJob,
     hash: runHashJob
   },
@@ -489,8 +633,14 @@ const jobOrchestrator = new JobOrchestrator({
     }
     return false;
   },
-  onStateChanged: ({ syncStatus }) => {
+  onStateChanged: ({ job, syncStatus }) => {
     updateSyncStatusPatch(syncStatus);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('jobs:progress', {
+        job,
+        syncStatus: latestSyncStatus
+      });
+    }
   }
 });
 
@@ -507,10 +657,16 @@ function normalizeJobProfile(profile) {
     : 'balanced';
 }
 
-async function readPdfPageCount(pdfPath) {
+async function readPdfPageCount(pdfPath, options = {}) {
+  const maxBytes = Math.max(1, Number(options.maxBytes) || MAX_PDF_BYTES);
+  const stats = await fs.promises.stat(pdfPath);
+  if (!stats.isFile() || stats.size <= 0 || stats.size > maxBytes) {
+    throw new Error('PDF hors limite de taille.');
+  }
   const pdfjs = await loadPdfJsModule();
   // Use async I/O so large PDFs don't block the main event loop during the boot-time cache warm-up.
   const fileBuffer = await fs.promises.readFile(pdfPath);
+  if (fileBuffer.length > maxBytes) throw new Error('PDF hors limite de taille.');
   const data = new Uint8Array(fileBuffer);
   const loadingTask = pdfjs.getDocument({
     data,
@@ -630,6 +786,58 @@ function emitLibraryPayload(payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('library:changed', payload);
   mainWindow.webContents.send('library:compactIndexChanged', payload.compactIndex);
+}
+
+function scheduleSourceLinkReconciliation(library, delay = 900) {
+  const mangas = (Array.isArray(library?.allMangas) ? library.allMangas : []).map((manga) => ({
+    id: manga?.id || null,
+    contentId: manga?.contentId || null,
+    path: manga?.path || null,
+    displayTitle: manga?.displayTitle || manga?.name || '',
+    categoryId: manga?.categoryId || manga?.category?.id || manga?.categoryIds?.[0] || null
+  }));
+  if (!mangas.length) return;
+  if (sourceReconcileTimer) clearTimeout(sourceReconcileTimer);
+  sourceReconcileTimer = setTimeout(() => {
+    sourceReconcileTimer = null;
+    if (sourceReconcilePromise) return;
+    updateSyncStatusPatch({
+      state: 'updating',
+      label: 'mise a jour',
+      detail: 'Liens de sources verifies en arriere-plan'
+    });
+    sourceReconcilePromise = reconcileSourceLinksInWorker(mangas, { userDataPath: getUserDataPath() })
+      .then((result) => {
+        if (!result?.changed) return;
+        invalidateSourcesStateCache();
+        sourceRevision += 1;
+        emitStatePatch({
+          sourceSync: {
+            revision: sourceRevision,
+            linkCount: Number(result.linkCount || 0)
+          }
+        });
+      })
+      .catch((error) => {
+        console.error('[sources] background reconciliation failed:', error);
+        updateSyncStatusPatch({
+          state: 'attention-needed',
+          label: 'attention',
+          detail: 'Verification des liens de sources a relancer'
+        });
+      })
+      .finally(() => {
+        sourceReconcilePromise = null;
+        if (latestSyncStatus.state !== 'attention-needed') {
+          updateSyncStatusPatch({
+            state: 'up-to-date',
+            label: 'a jour',
+            detail: 'Donnees locales synchronisees'
+          });
+        }
+      });
+  }, Math.max(0, delay));
+  if (typeof sourceReconcileTimer.unref === 'function') sourceReconcileTimer.unref();
 }
 
 function requestPdfMetaSync(options = {}) {
@@ -919,6 +1127,16 @@ function createWindow() {
     closeSplashWindow();
   });
 
+  mainWindow.webContents.on('unresponsive', () => {
+    recordMeasurement('renderer.unresponsive', 0, { severity: 'critical' });
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    recordMeasurement('renderer.process-gone', 0, {
+      reason: String(details?.reason || 'unknown'),
+      exitCode: Number(details?.exitCode || 0)
+    });
+  });
+
   mainWindow.on('close', () => {
     persistVaultLock();
   });
@@ -1158,33 +1376,36 @@ function stripPrivateContentFromPersistedState(state, existingLibrary) {
     systemProtectionAvailable: isSystemVaultProtectionAvailable()
   };
 
-  if (!effectiveHidePrivate || allPrivateIds.size === 0) return clientState;
+  if (!effectiveHidePrivate) return clientState;
 
-  for (const mangaId of allPrivateIds) {
-    delete clientState.metadata?.[mangaId];
-    delete clientState.favorites?.[mangaId];
-    delete clientState.readStatus?.[mangaId];
-    delete clientState.mangaTags?.[mangaId];
-    delete clientState.mangaTagMeta?.[mangaId];
-    delete clientState.annotations?.[mangaId];
-  }
-
-  for (const collection of Object.values(clientState.collections || {})) {
-    collection.mangaIds = (collection.mangaIds || []).filter((mangaId) => !allPrivateIds.has(mangaId));
-  }
+  const privateChapterIds = new Set(
+    (library?.allMangas || [])
+      .filter((manga) => allPrivateIds.has(manga.id))
+      .flatMap((manga) => (manga.chapters || []).flatMap((chapter) => [
+        chapter.id,
+        chapter.contentId,
+        chapter.locationId,
+        chapter.legacyId,
+        chapter.progressKey,
+        chapter.metadataKey
+      ]))
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
+  sanitizePrivateMangaReferences(clientState, allPrivateIds, privateChapterIds);
 
   clientState.categories = (clientState.categories || []).filter((category) => !privateCategoryIds.has(category.id));
-  clientState.recents = (clientState.recents || []).filter((entry) => !allPrivateIds.has(entry.mangaId));
-  clientState.metadataWorkbenchQueue = (clientState.metadataWorkbenchQueue || []).filter((mangaId) => !allPrivateIds.has(mangaId));
-  clientState.readingQueue = (clientState.readingQueue || []).filter((item) => !allPrivateIds.has(item.mangaId));
   if (privateCategoryIds.has(clientState?.ui?.selectedCategoryId)) {
     clientState.ui.selectedCategoryId = null;
   }
-  return clientState;
+  return stripPrivateIdentityState(clientState, allPrivateIds);
 }
 
 function buildClientPersistedState(state, rawLibrary) {
   const privateSafeState = stripPrivateContentFromPersistedState(state, rawLibrary);
+  // Tombstones contain local paths and rollback state. They are intentionally
+  // retained only in the main process and never cross the preload boundary.
+  delete privateSafeState.deletionTombstones;
   if (privateSafeState?.ui?.allowNsfwSources) return privateSafeState;
 
   const hiddenTagIds = getNsfwOnlyTagIds(privateSafeState);
@@ -1272,6 +1493,7 @@ function buildStatePayload(options = {}) {
   } = options;
 
   let persisted = loadState();
+  configurePerfDiagnostics(Boolean(persisted?.ui?.experimental?.performanceDiagnostics));
   const persistedExperimental = persisted?.ui?.experimental || {};
   if (persistedExperimental.visualReader || persistedExperimental.guidedView || persistedExperimental.visualDedupe) {
     persisted = updateState((state) => {
@@ -1288,6 +1510,20 @@ function buildStatePayload(options = {}) {
 
   const usesProvidedLibrary = Boolean(providedLibrary);
   let rawLibrary = providedLibrary || scanLibrary(persisted);
+  const livePaths = new Set((rawLibrary?.allMangas || [])
+    .map((manga) => String(manga?.path || '').toLowerCase())
+    .filter(Boolean));
+  const now = Date.now();
+  const tombstoneNeedsUpdate = Object.values(persisted.deletionTombstones || {}).some((tombstone) => (
+    Date.parse(tombstone?.expiresAt) <= now
+    || livePaths.has(String(tombstone?.path || '').toLowerCase())
+  ));
+  if (tombstoneNeedsUpdate) {
+    persisted = updateState((state) => {
+      restoreReturnedTombstones(state, rawLibrary?.allMangas || [], now);
+      return state;
+    });
+  }
 
   if (!skipReconciliation) {
     const reconciliation = reconcilePersistedStateWithLibrary(persisted, rawLibrary);
@@ -1305,7 +1541,13 @@ function buildStatePayload(options = {}) {
     }
   }
 
-  const sourceLinks = reconcileSeriesLinksWithLibrary(rawLibrary?.allMangas || []);
+  // A derived snapshot intentionally contains scan data only. Always reapply
+  // the current user segments before exposing it so remapped progress,
+  // metadata and organization survive a restart after a folder move.
+  rawLibrary = applyPersistedOverlayToLibrary(rawLibrary, persisted);
+
+  const sourceState = loadSourcesState();
+  const sourceLinks = sourceState.seriesLinks || [];
   const privacyModel = buildVaultPrivacyModel(rawLibrary, persisted);
   const library = {
     ...applyVaultVisibilityToLibrary(rawLibrary, persisted, privacyModel)
@@ -1338,11 +1580,19 @@ function buildStatePayload(options = {}) {
     lastScanTime = Date.now();
   }
   updateSyncStatusPatch();
+  stateRevision += 1;
   const payload = {
+    stateRevision,
+    sourceRevision,
+    syncState: {
+      status: latestSyncStatus.state,
+      lastSuccess: latestSyncStatus.lastCompletedAt || null,
+      error: latestSyncStatus.state === 'attention-needed' ? latestSyncStatus.detail : null
+    },
     persisted: buildClientPersistedState(persisted, rawLibrary),
     plugins: listAvailablePlugins(persisted),
     sources: {
-      recentSeries: loadSourcesState().recentSeries || [],
+      recentSeries: sourceState.recentSeries || [],
       linkedSeries: sourceLinks
     },
     library,
@@ -1649,19 +1899,100 @@ function getMergedPayloadMangas(payload) {
   return [...unique.values()];
 }
 
-function buildComicInfoExportRecord(manga) {
-  const tags = uniqueStrings((manga?.tags || []).map((tag) => tag?.name || tag?.id || ''));
-  return {
-    series: manga?.displayTitle || manga?.name || '',
-    title: manga?.displayTitle || manga?.name || '',
-    number: manga?.number || '',
-    volume: manga?.volume || '',
-    year: manga?.year || '',
-    writer: manga?.author || '',
-    artist: '',
-    summary: manga?.description || '',
-    genre: tags
+let identityAnalysisPromise = null;
+
+function getIdentityMangas() {
+  const state = loadState();
+  const privateIds = buildVaultPrivacyModel(
+    rawLibrarySnapshot || { allMangas: [], categories: [] },
+    state
+  ).allPrivateIds;
+  return (rawLibrarySnapshot?.allMangas || []).map((manga) => {
+    const metadata = state.metadata?.[manga.id] || {};
+    return {
+      ...manga,
+      aliases: [...new Set([
+        ...(manga.aliases || []),
+        ...(metadata.aliases || []),
+        ...(metadata.onlineAltTitles || [])
+      ])],
+      externalIds: [
+        metadata.malId,
+        metadata.anilistId,
+        metadata.mangadexId,
+        metadata.nhentaiId
+      ].filter(Boolean),
+      isPrivate: privateIds.has(manga.id)
+    };
+  });
+}
+
+function getIdentityAnalysisContextSignature() {
+  const state = loadState();
+  const libraryIdentity = (rawLibrarySnapshot?.allMangas || [])
+    .map((manga) => ({
+      id: manga.id,
+      contentId: manga.contentId || null,
+      path: manga.path || null,
+      chapters: (manga.chapters || []).map((chapter) => ({
+        id: chapter.id,
+        contentId: chapter.contentId || null,
+        path: chapter.path || chapter.filePath || null,
+        pageCount: chapter.pageCount || chapter.pages?.length || 0
+      }))
+    }))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  const relevantState = {
+    metadata: Object.entries(state.metadata || {})
+      .sort(([left], [right]) => left.localeCompare(right)),
+    vault: {
+      locked: Boolean(state.vault?.locked),
+      stealthMode: Boolean(state.vault?.stealthMode),
+      privateMangaIds: [...(state.vault?.privateMangaIds || [])].sort()
+    },
+    identityRecords: Object.entries(state.identityRecords || {})
+      .map(([id, record]) => [id, record?.contentId, record?.path, record?.strongFingerprint, record?.updatedAt])
+      .sort(([left], [right]) => left.localeCompare(right)),
+    workGroups: Object.entries(state.workGroups || {})
+      .sort(([left], [right]) => left.localeCompare(right))
   };
+  return crypto.createHash('sha256')
+    .update(JSON.stringify({
+      stateRevision,
+      sourceRevision,
+      libraryIdentity,
+      relevantState
+    }))
+    .digest('hex');
+}
+
+const identityService = createIdentityService({
+  loadState,
+  updateState,
+  getMangas: getIdentityMangas,
+  getContextSignature: getIdentityAnalysisContextSignature,
+  updateSourcesState
+});
+
+function runIdentityAnalysis() {
+  if (safeModeEnabled) {
+    return Promise.resolve({ ok: false, error: 'Mode sûr actif.' });
+  }
+  if (identityAnalysisPromise) return identityAnalysisPromise;
+  identityAnalysisPromise = identityService.analyze()
+    .finally(() => {
+      identityAnalysisPromise = null;
+    });
+  return identityAnalysisPromise;
+}
+
+function scheduleIdentityAnalysis(delayMs = 1200) {
+  const timer = setTimeout(() => {
+    runIdentityAnalysis().catch((error) => {
+      console.warn('[identity] background analysis failed:', error?.message || error);
+    });
+  }, Math.max(0, Number(delayMs || 0)));
+  timer.unref?.();
 }
 
 function resolveComicInfoSidecarTargetPath(manga) {
@@ -1910,27 +2241,50 @@ function scheduleBootstrapRefreshScan() {
 app.whenReady().then(() => {
   registerLocalAssetProtocol();
   createWindow();
-  jobOrchestrator.bootstrap();
-  consumeInstallerFirstRunScan();
-  setTimeout(() => restartWatchers(), 3500);
-  scheduleBootstrapPdfSync();
+  if (!safeModeEnabled) {
+    jobOrchestrator.bootstrap();
+    consumeInstallerFirstRunScan();
+    setTimeout(() => restartWatchers(), 3500);
+    scheduleBootstrapPdfSync();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
-      scheduleBootstrapPdfSync();
+      if (!safeModeEnabled) scheduleBootstrapPdfSync();
     }
   });
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (quitFlushComplete) return;
+  event.preventDefault();
+  if (quitFlushInProgress) return;
+  quitFlushInProgress = true;
   persistVaultLock();
   terminateSourceRuntimeProcesses();
-  // Flush any debounced JSON writes synchronously so we never lose in-memory state on exit.
-  flushStateWrites();
-  closeDerivedStore();
-  closeCoreStore();
-  closeSplashWindow();
+  const snapshot = loadState();
+  try { writeLastValidSnapshot(getUserDataPath(), snapshot); } catch (_error) {}
+  Promise.all([
+    flushWithDeadline({
+      timeoutMs: 2000,
+      flushState: flushStateWrites,
+      flushSources: flushSourcesStateWrites
+    }),
+    shutdownHeavyIoWorkers({ timeoutMs: 750 }),
+    thumbnailUtilityPool?.shutdown() || Promise.resolve()
+  ]).then(([result]) => {
+    if (result.ok) clearShutdownMarker(getUserDataPath());
+    else writeShutdownMarker(getUserDataPath(), result);
+  }).catch((error) => {
+    writeShutdownMarker(getUserDataPath(), { error: error?.message || String(error) });
+  }).finally(() => {
+    closeDerivedStore();
+    closeCoreStore();
+    closeSplashWindow();
+    quitFlushComplete = true;
+    app.quit();
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -1938,9 +2292,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     watcher.close();
     terminateSourceRuntimeProcesses();
-    flushStateWrites();
-    closeDerivedStore();
-    closeCoreStore();
     app.quit();
   }
 });
@@ -1950,7 +2301,10 @@ app.on('window-all-closed', () => {
 /* ------------------------------------------------------------------ */
 
 function persistReadingProgress(payload) {
-  updateState((state) => {
+  updateStateSegments({
+    reader: ['progress', 'chapterReadStatus', 'recents'],
+    root: ['ui']
+  }, (state) => {
     const { mangaId, chapterId, pageIndex, pageCount, mode, fitMode, zoom, scrollTop, scrollRatio } = payload;
     const now = new Date().toISOString();
 
@@ -2207,9 +2561,24 @@ function reconcilePersistedStateWithLibrary(persisted, rawLibrary) {
     }
 
     remapSessionIdentifiers(state, mangaIdMap, chapterIdMap);
+    remapPersistedReferences(
+      state,
+      [...mangaIdMap.entries()].map(([fromMangaId, toMangaId]) => ({ fromMangaId, toMangaId })),
+      [...chapterIdMap.entries()].map(([fromChapterId, toChapterId]) => ({ fromChapterId, toChapterId }))
+    );
     state.scanIndex = rawLibrary.scanIndex;
     return state;
   });
+
+  if (mangaIdMap.size > 0) {
+    updateSourcesState((draft) => {
+      draft.seriesLinks = remapSourceLinks(
+        draft.seriesLinks,
+        [...mangaIdMap.entries()].map(([fromMangaId, toMangaId]) => ({ fromMangaId, toMangaId }))
+      );
+      return draft;
+    });
+  }
 
   return { changed: true, persisted: nextState };
 }
@@ -2229,8 +2598,93 @@ ipcMain.on('app:mark-interaction', () => {
   jobOrchestrator.markInteraction();
 });
 
+ipcMain.on('app:perf-event', (_event, entry = {}) => {
+  const durationMs = Math.max(0, Math.min(60_000, Number(entry?.durationMs) || 0));
+  const kind = String(entry?.kind || 'renderer.event').replace(/[^a-z0-9_.-]/gi, '').slice(0, 60);
+  recordMeasurement(kind || 'renderer.event', durationMs, { source: 'renderer' });
+});
+
 ipcMain.on('reader:set-active', (_event, active) => {
   jobOrchestrator.setReaderActive(Boolean(active));
+});
+
+ipcMain.handle('app:reload', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'Fenetre indisponible.' };
+  mainWindow.reload();
+  return { ok: true };
+});
+
+ipcMain.handle('app:restart', async (_event, options = {}) => {
+  const safeMode = Boolean(options?.safeMode);
+  const args = process.argv.slice(1).filter((arg) => arg !== '--sawa-safe-mode');
+  if (safeMode) args.push('--sawa-safe-mode');
+  app.relaunch({ args });
+  app.quit();
+  return { ok: true, safeMode };
+});
+
+ipcMain.handle('app:openDiagnostics', async () => {
+  const directory = getDiagnosticDir(getUserDataPath());
+  const error = await shell.openPath(directory);
+  return error ? { ok: false, error } : { ok: true, path: directory };
+});
+
+ipcMain.handle('app:copyDiagnostics', async (_event, input = {}) => {
+  const message = String(input?.message || '').replace(/[\r\n]+/g, ' ').slice(0, 500);
+  const marker = readShutdownMarker(getUserDataPath());
+  clipboard.writeText(JSON.stringify({
+    appVersion: app.getVersion(),
+    safeMode: safeModeEnabled,
+    rendererMessage: message || null,
+    shutdownWarning: marker ? {
+      recordedAt: marker.recordedAt,
+      timedOut: marker.timedOut,
+      stateFlushed: marker.stateFlushed,
+      sourcesFlushed: marker.sourcesFlushed
+    } : null,
+    diagnostics: getDiagnosticsSnapshot()
+  }, null, 2));
+  return { ok: true };
+});
+
+function resolveAllowedMediaPath(filePath) {
+  const roots = [
+    getUserDataPath(),
+    ...loadState().categories.map((category) => category.path)
+  ];
+  return resolveRealPathWithinRoots(filePath, roots);
+}
+
+ipcMain.handle('media:openSource', async (_event, filePath) => {
+  const resolved = resolveAllowedMediaPath(filePath);
+  if (!resolved) return { ok: false, error: 'Chemin media refuse ou introuvable.' };
+  const error = await shell.openPath(resolved);
+  return error ? { ok: false, error } : { ok: true };
+});
+
+ipcMain.handle('media:reportFailure', async (_event, input = {}) => {
+  const resolved = resolveAllowedMediaPath(input?.filePath);
+  if (!resolved) return { ok: false, error: 'Chemin media refuse ou introuvable.' };
+  const entry = {
+    recordedAt: new Date().toISOString(),
+    kind: ['pdf', 'image'].includes(String(input?.kind)) ? String(input.kind) : 'image',
+    pageNumber: Math.max(1, Math.min(100000, Number(input?.pageNumber) || 1)),
+    code: String(input?.code || 'render-failed').replace(/[^a-z0-9_.-]/gi, '').slice(0, 60),
+    fileName: path.basename(resolved)
+  };
+  const rateKey = `${entry.kind}:${resolved}:${entry.pageNumber}:${entry.code}`;
+  const now = Date.now();
+  if ((now - Number(mediaFailureLastReported.get(rateKey) || 0)) < 10_000) {
+    return { ok: true, rateLimited: true };
+  }
+  mediaFailureLastReported.set(rateKey, now);
+  const logPath = path.join(getDiagnosticDir(getUserDataPath()), 'media-failures.jsonl');
+  if (fs.existsSync(logPath) && fs.statSync(logPath).size > 1024 * 1024) {
+    fs.rmSync(`${logPath}.1`, { force: true });
+    fs.renameSync(logPath, `${logPath}.1`);
+  }
+  fs.appendFileSync(logPath, `${JSON.stringify(entry)}\n`, 'utf8');
+  return { ok: true };
 });
 
 ipcMain.handle('app:bootstrap', async () => {
@@ -2267,7 +2721,7 @@ ipcMain.handle('app:bootstrap', async () => {
   } else {
     detectNewChapters(payload.library);
   }
-  if (hasSnapshot && (loadState()?.categories?.length || 0) > 0) {
+  if (!safeModeEnabled && hasSnapshot && (loadState()?.categories?.length || 0) > 0) {
     updateSyncStatusPatch({
       state: 'updating',
       label: 'mise a jour',
@@ -2275,7 +2729,22 @@ ipcMain.handle('app:bootstrap', async () => {
     });
     scheduleBootstrapRefreshScan();
   }
-  return payload;
+  if (!safeModeEnabled) scheduleSourceLinkReconciliation(payload.library);
+  if (!safeModeEnabled) scheduleIdentityAnalysis(hasSnapshot ? 1800 : 400);
+  const shutdownWarning = readShutdownMarker(getUserDataPath());
+  return {
+    ...payload,
+    reliability: {
+      safeMode: safeModeEnabled,
+      safeModeSnapshotLoaded: Boolean(safeModeSnapshot?.state),
+      shutdownWarning: shutdownWarning ? {
+        recordedAt: shutdownWarning.recordedAt,
+        timedOut: shutdownWarning.timedOut,
+        stateFlushed: shutdownWarning.stateFlushed,
+        sourcesFlushed: shutdownWarning.sourcesFlushed
+      } : null
+    }
+  };
 });
 
 ipcMain.handle('app:getCompactIndex', async () => {
@@ -2316,7 +2785,7 @@ ipcMain.handle('migration:run', async (_event, options = {}) => {
   }
 
   const backup = createBackup('pre-v2-migration');
-  flushStateWrites();
+  await flushStateWrites();
   const migrationId = `migration-${Date.now()}`;
   const result = getCoreStore().migrateLegacySnapshot({
     persistedState: persisted,
@@ -2347,7 +2816,10 @@ ipcMain.handle('migration:restoreBackup', async (_event, input = {}) => {
   if (!backupPath || !fs.existsSync(backupPath)) {
     return { ok: false, error: 'Backup introuvable.' };
   }
-  const restored = importBackup(backupPath);
+  const restored = await importBackup(backupPath);
+  if (!restored?.restored) {
+    return { ok: false, restored, error: restored?.error || 'Restauration impossible.' };
+  }
   rawLibrarySnapshot = null;
   return {
     ok: true,
@@ -2459,27 +2931,27 @@ ipcMain.handle('reader:saveProgress', async (_event, payload = {}) => {
 });
 
 ipcMain.handle('search:query', async (_event, input = {}) => {
-  const query = typeof input === 'string' ? input : input?.query;
-  const limit = Number.isFinite(Number(input?.limit)) ? Number(input.limit) : 50;
-  if (hasCompletedCoreMigration()) {
-    return {
-      source: 'core-v2',
-      ...getCoreStore().search(query, limit)
-    };
-  }
-  const advanced = searchDocuments(query, limit);
-  if (advanced.length > 0) {
-    return { source: 'derived-index', query: String(query || '').trim(), results: advanced };
-  }
+  const state = loadState();
+  const rawLibrary = rawLibrarySnapshot || readLibrarySnapshot() || {
+    allMangas: [],
+    categories: []
+  };
+  const useCoreSearch = hasCompletedCoreMigration();
+  const result = runPrivacySafeAdvancedSearch({
+    input,
+    state,
+    rawLibrary,
+    searchDocuments: useCoreSearch
+      ? (query, limit) => getCoreStore().search(query, limit).results.map((entry) => ({
+          itemContentId: entry?.series?.contentId || null,
+          itemLocationId: entry?.series?.locationId || entry?.series?.id || entry?.id || null,
+          docType: 'manga'
+        }))
+      : searchDocuments
+  });
   return {
-    source: 'legacy-memory-index',
-    query: String(query || '').trim(),
-    results: fallbackSeriesFromPayload({ query, limit, includePayload: false }).items.map((series) => ({
-      id: series.id,
-      type: 'series',
-      title: series.title,
-      series
-    }))
+    source: useCoreSearch ? 'core-v2' : 'derived-index',
+    ...result
   };
 });
 
@@ -2550,49 +3022,132 @@ ipcMain.handle('library:removeCategory', async (_event, categoryId) => {
   return buildPayloadAfterStructuralScan();
 });
 
-ipcMain.handle('library:trashManga', async (_event, mangaId) => {
+async function performTrashScannedMangas(mangaIds, {
+  checkpoint = () => {},
+  isCancelled = () => false
+} = {}) {
   const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
-  const manga = payload.library?.allMangas?.find((entry) => entry.id === mangaId);
-
-  if (!manga?.path || !fs.existsSync(manga.path)) {
-    return payload;
-  }
-
-  try {
+  const allMangas = [
+    ...(payload.library?.allMangas || []),
+    ...(payload.vaultLibrary?.allMangas || [])
+  ];
+  const stateBeforeTrash = loadState();
+  const trashItem = async (targetPath) => {
     if (typeof shell.trashItem === 'function') {
-      await shell.trashItem(manga.path);
-    } else if (typeof shell.moveItemToTrash === 'function') {
-      shell.moveItemToTrash(manga.path);
+      await shell.trashItem(targetPath);
+      return;
     }
-  } catch (error) {
-    return { ...payload, error: error?.message || 'Unable to move manga to trash.' };
-  }
-
-  updateState((state) => {
-    delete state.metadata[mangaId];
-    delete state.favorites[mangaId];
-    delete state.readStatus[mangaId];
-    delete state.knownChapterCounts[mangaId];
-    delete state.mangaTags[mangaId];
-    delete state.mangaTagMeta[mangaId];
-
-    // Remove from all collections
-    for (const col of Object.values(state.collections)) {
-      col.mangaIds = (col.mangaIds || []).filter((id) => id !== mangaId);
+    if (typeof shell.moveItemToTrash === 'function' && shell.moveItemToTrash(targetPath)) return;
+    throw new Error('Windows n a pas confirme le deplacement vers la Corbeille.');
+  };
+  const result = await bulkTrashMangas({
+    mangas: allMangas,
+    requestedIds: Array.isArray(mangaIds) ? mangaIds : [],
+    categoryRoots: stateBeforeTrash.categories.map((category) => category.path),
+    trashItem,
+    state: stateBeforeTrash,
+    concurrency: 2,
+    isCancelled,
+    onProgress: (progress) => {
+      const { tombstone: _tombstone, ...resultEntry } = progress.result || {};
+      checkpoint({
+        completed: progress.completed,
+        total: progress.total,
+        lastResult: resultEntry
+      });
     }
-
-    for (const chapter of manga.chapters || []) {
-      delete state.progress[chapter.id];
-      delete state.chapterReadStatus[chapter.id];
-      if (chapter?.path) delete state.pdfMeta?.[chapter.path];
-    }
-
-    state.recents = state.recents.filter((entry) => entry.mangaId !== mangaId);
-    return state;
   });
+  const succeededById = new Map(result.succeeded.map((entry) => [entry.mangaId, entry]));
+  if (succeededById.size > 0) {
+    updateState((state) => {
+      allMangas.forEach((manga) => {
+        const success = succeededById.get(manga.id);
+        if (success) removeDeletedMangaState(state, manga, success.tombstone);
+      });
+      return state;
+    });
+    restartWatchers();
+  }
+  if (succeededById.size > 0) {
+    await buildPayloadAfterStructuralScan();
+    stateRevision += 1;
+  }
+  const results = result.results.map(({ tombstone, ...entry }) => entry);
+  const patch = {
+    removedMangaIds: [...succeededById.keys()],
+    revision: stateRevision
+  };
+  checkpoint({
+    completed: results.length,
+    total: results.length,
+    results,
+    patch
+  });
+  return {
+    results,
+    patch,
+    error: result.failed.length > 0
+      ? `${result.failed.length} suppression${result.failed.length > 1 ? 's' : ''} non terminee${result.failed.length > 1 ? 's' : ''}.`
+      : undefined
+  };
+}
 
-  restartWatchers();
-  return buildPayloadAfterStructuralScan();
+function sanitizeCbzFileName(value, fallback = 'Chapitre') {
+  const normalized = String(value || '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+    .replace(/[.\s]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (normalized || fallback).slice(0, 120);
+}
+
+async function runBulkTrashJob({ job, checkpoint, isCancelled }) {
+  await performTrashScannedMangas(job.payload?.mangaIds, { checkpoint, isCancelled });
+}
+
+ipcMain.handle('library:trashManga', async (_event, mangaId) => {
+  // The shared path returns buildPayloadAfterStructuralScan after Windows
+  // confirms the Trash operation, preserving the structural-scan contract.
+  const result = await performTrashScannedMangas([mangaId]);
+  const nextPayload = await buildInteractivePayloadAsync({ refreshDerived: false });
+  return {
+    ...nextPayload,
+    bulkTrash: {
+      results: result.results
+    },
+    error: result.error
+  };
+});
+
+ipcMain.handle('library:bulkTrashMangas', async (_event, mangaIds = []) => {
+  if (!Array.isArray(mangaIds) || mangaIds.length > 500) {
+    return {
+      ok: false,
+      error: 'Selection de suppression invalide.'
+    };
+  }
+  const requestedIds = [...new Set(mangaIds
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (!requestedIds.length) {
+    return { ok: false, error: 'La selection de suppression est vide.' };
+  }
+  const job = jobOrchestrator.enqueue({
+    kind: 'bulk-trash',
+    payload: { mangaIds: requestedIds },
+    requeueable: false,
+    progress: { completed: 0, total: requestedIds.length }
+  });
+  return {
+    ok: true,
+    jobId: job.id,
+    job: {
+      id: job.id,
+      kind: job.kind,
+      status: job.status,
+      progress: job.progress
+    }
+  };
 });
 
 ipcMain.handle('library:toggleCategoryHidden', async (_event, categoryId) => {
@@ -2607,8 +3162,16 @@ ipcMain.handle('library:toggleCategoryHidden', async (_event, categoryId) => {
 
 ipcMain.handle('library:getChapterPages', async (_event, chapterPath) => {
   try {
-    if (isPdfFile(chapterPath) && fs.existsSync(chapterPath)) {
-      const pageCount = await readPdfPageCount(chapterPath);
+    if (isPdfFile(chapterPath)) {
+      const roots = [
+        getUserDataPath(),
+        ...loadState().categories.map((category) => category.path)
+      ];
+      const allowedPdf = resolveAllowedPdfPath(chapterPath, { roots });
+      if (!allowedPdf) return [];
+      const pageCount = await readPdfPageCount(allowedPdf.resolvedPath, {
+        maxBytes: MAX_PDF_BYTES
+      });
       if (pageCount > 0) {
         updateState((state) => {
           state.pdfMeta = state.pdfMeta || {};
@@ -2630,12 +3193,17 @@ ipcMain.handle('library:getChapterPages', async (_event, chapterPath) => {
 
 ipcMain.handle('library:readPdfData', async (_event, filePath) => {
   try {
-    if (!filePath || !isPdfFile(filePath) || !fs.existsSync(filePath)) {
-      return null;
-    }
-
-    const buffer = measureSync('media.pdf.readFile', () => fs.readFileSync(filePath), {
-      filePath
+    const roots = [
+      getUserDataPath(),
+      ...loadState().categories.map((category) => category.path)
+    ];
+    const readStartedAt = Date.now();
+    const result = await readAllowedPdfBuffer(filePath, { roots });
+    if (!result) return null;
+    const { buffer, resolvedPath } = result;
+    recordMeasurement('media.pdf.readFile', Date.now() - readStartedAt, {
+      filePath: resolvedPath,
+      fileBytes: buffer.length
     });
     const base64 = measureSync('media.pdf.encodeBase64', () => buffer.toString('base64'), {
       fileBytes: buffer.length
@@ -2650,51 +3218,120 @@ ipcMain.handle('library:readPdfData', async (_event, filePath) => {
   }
 });
 
-ipcMain.handle('library:pickCover', async (_event, mangaId) => {
+async function resolveCoverManagerManga(mangaId) {
+  const normalizedId = String(mangaId || '').trim();
+  if (!normalizedId) throw new Error('Manga invalide.');
+  const payload = await buildInteractivePayloadAsync({ refreshDerived: false });
+  const manga = findMangaByReference(payload.library, normalizedId)
+    || findMangaByReference(payload.vaultLibrary, normalizedId);
+  if (!manga) throw new Error('Manga introuvable ou coffre verrouillé.');
+  return manga;
+}
+
+function persistCoverProfile(mangaId, nextProfile) {
+  const normalizedId = String(mangaId || '').trim();
+  const profile = normalizeCoverProfile(nextProfile, normalizedId);
+  const selectedPath = activeCoverPath(profile);
+  updateStateSegments({ metadata: ['coverProfiles', 'metadata'] }, (state) => {
+    state.coverProfiles = state.coverProfiles || {};
+    state.metadata = state.metadata || {};
+    state.coverProfiles[normalizedId] = profile;
+    state.metadata[normalizedId] = {
+      ...(state.metadata[normalizedId] || {}),
+      coverMode: profile.activeVariantId === 'auto' ? 'auto' : 'custom'
+    };
+    if (selectedPath) state.metadata[normalizedId].coverPath = selectedPath;
+    return state;
+  });
+  scheduleInteractiveDerivedSync();
+  return profile;
+}
+
+async function importCoverFromDialog(mangaId) {
+  const manga = await resolveCoverManagerManga(mangaId);
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choisir une couverture personnalisee',
     properties: ['openFile'],
     filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'avif'] }]
   });
-
-  const payload = buildInteractivePayload({ refreshDerived: false });
   if (result.canceled || result.filePaths.length === 0) {
-    return payload;
+    return { canceled: true, manga };
   }
-
   const sourcePath = result.filePaths[0];
-  const manga = payload.library?.allMangas?.find((entry) => entry.id === mangaId);
-  let finalCoverPath = sourcePath;
-
-  if (manga?.path && fs.existsSync(manga.path)) {
-    const ext = (path.extname(sourcePath) || '.png').toLowerCase();
-    const copiedCoverPath = path.join(manga.path, `.sawa-custom-cover${ext}`);
-
-    try {
-      for (const fileName of fs.readdirSync(manga.path)) {
-        if (fileName.startsWith('.sawa-custom-cover')) {
-          const stalePath = path.join(manga.path, fileName);
-          if (stalePath !== copiedCoverPath) {
-            try { fs.unlinkSync(stalePath); } catch (_) {}
-          }
-        }
-      }
-      fs.copyFileSync(sourcePath, copiedCoverPath);
-      finalCoverPath = copiedCoverPath;
-    } catch (error) {
-      finalCoverPath = sourcePath;
-    }
-  }
-
-  updateState((state) => {
-    state.metadata[mangaId] = {
-      ...(state.metadata[mangaId] || {}),
-      coverPath: finalCoverPath
-    };
-    return state;
+  const variant = await runHeavyIoTask('cover-import', {
+    sourcePath,
+    managedCoverDir: getManagedCoverDir(),
+    sourceLabel: 'Image locale importée'
   });
+  const current = loadState().coverProfiles?.[manga.id];
+  const profile = selectCoverVariant(mergeCoverVariants(current, [variant]), variant.id);
+  return { canceled: false, manga, profile: persistCoverProfile(manga.id, profile), variant };
+}
 
+ipcMain.handle('library:pickCover', async (_event, mangaId) => {
+  const imported = await importCoverFromDialog(mangaId);
+  if (imported.canceled) return buildInteractivePayload({ refreshDerived: false });
   return buildInteractivePayload();
+});
+
+ipcMain.handle('covers:list', async (_event, mangaId) => {
+  const manga = await resolveCoverManagerManga(mangaId);
+  const state = loadState();
+  const gallery = await runHeavyIoTask('cover-gallery', {
+    manga,
+    profile: state.coverProfiles?.[manga.id]
+  });
+  const current = normalizeCoverProfile(state.coverProfiles?.[manga.id], manga.id);
+  if (JSON.stringify(current.variants) !== JSON.stringify(gallery.profile.variants)) {
+    updateStateSegments({ metadata: ['coverProfiles'] }, (nextState) => {
+      nextState.coverProfiles = nextState.coverProfiles || {};
+      nextState.coverProfiles[manga.id] = gallery.profile;
+      return nextState;
+    });
+  }
+  return { ok: true, gallery };
+});
+
+ipcMain.handle('covers:import', async (_event, mangaId) => {
+  const imported = await importCoverFromDialog(mangaId);
+  if (imported.canceled) return { ok: true, canceled: true };
+  return mutationResult({
+    mangaId: imported.manga.id,
+    profile: imported.profile,
+    variant: imported.variant
+  });
+});
+
+ipcMain.handle('covers:adoptCandidate', async (_event, input) => {
+  const manga = await resolveCoverManagerManga(input?.mangaId);
+  const sourcePath = resolveCoverCandidatePath(input?.sourcePath, manga.path);
+  if (!sourcePath) {
+    throw new Error('La page candidate doit appartenir exactement au manga.');
+  }
+  const variant = await runHeavyIoTask('cover-import', {
+    sourcePath,
+    allowedRoot: manga.path,
+    managedCoverDir: getManagedCoverDir(),
+    sourceLabel: 'Page candidate'
+  });
+  const current = loadState().coverProfiles?.[manga.id];
+  const profile = selectCoverVariant(mergeCoverVariants(current, [variant]), variant.id);
+  persistCoverProfile(manga.id, profile);
+  return mutationResult({ mangaId: manga.id, profile, variant });
+});
+
+ipcMain.handle('covers:select', async (_event, input) => {
+  const manga = await resolveCoverManagerManga(input?.mangaId);
+  const current = loadState().coverProfiles?.[manga.id];
+  const profile = persistCoverProfile(manga.id, selectCoverVariant(current, input?.variantId));
+  return mutationResult({ mangaId: manga.id, profile });
+});
+
+ipcMain.handle('covers:updateCrop', async (_event, input) => {
+  const manga = await resolveCoverManagerManga(input?.mangaId);
+  const current = loadState().coverProfiles?.[manga.id];
+  const profile = persistCoverProfile(manga.id, updateCoverCrop(current, input?.format, input?.crop));
+  return mutationResult({ mangaId: manga.id, profile });
 });
 
 ipcMain.handle('library:updateMetadata', async (_event, mangaId, patch) => {
@@ -2710,12 +3347,21 @@ ipcMain.handle('library:updateMetadata', async (_event, mangaId, patch) => {
   return buildInteractivePayload();
 });
 
+function getGroupedEditionIds(state, mangaId) {
+  const normalizedId = String(mangaId || '').trim();
+  const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(normalizedId));
+  return group ? [...group.editionIds] : [normalizedId];
+}
+
 ipcMain.handle('library:toggleFavorite', async (_event, mangaId) => {
   updateState((state) => {
-    state.favorites[mangaId] = !state.favorites[mangaId];
-    if (!state.favorites[mangaId]) {
-      delete state.favorites[mangaId];
+    const nextValue = !state.favorites[mangaId];
+    for (const editionId of getGroupedEditionIds(state, mangaId)) {
+      if (nextValue) state.favorites[editionId] = true;
+      else delete state.favorites[editionId];
     }
+    const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+    if (group) group.favorite = nextValue;
     return state;
   });
   return buildInteractivePayload();
@@ -2723,15 +3369,19 @@ ipcMain.handle('library:toggleFavorite', async (_event, mangaId) => {
 
 ipcMain.handle('library:toggleFavoriteLight', async (_event, mangaId) => {
   let isFavorite = false;
-  updateState((state) => {
+  updateStateSegments({ organization: ['favorites'] }, (state) => {
     isFavorite = !state.favorites?.[mangaId];
     state.favorites = state.favorites || {};
-    if (isFavorite) state.favorites[mangaId] = true;
-    else delete state.favorites[mangaId];
+    for (const editionId of getGroupedEditionIds(state, mangaId)) {
+      if (isFavorite) state.favorites[editionId] = true;
+      else delete state.favorites[editionId];
+    }
+    const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+    if (group) group.favorite = isFavorite;
     return state;
   });
   scheduleInteractiveDerivedSync();
-  return { ok: true, mangaId, isFavorite };
+  return mutationResult({ mangaId, isFavorite });
 });
 
 ipcMain.handle('library:bulkFavorite', async (_event, mangaIds = [], nextValue = true) => {
@@ -2739,8 +3389,12 @@ ipcMain.handle('library:bulkFavorite', async (_event, mangaIds = [], nextValue =
   updateState((state) => {
     ids.forEach((mangaId) => {
       const nextFavorite = nextValue === null ? !state.favorites?.[mangaId] : Boolean(nextValue);
-      if (nextFavorite) state.favorites[mangaId] = true;
-      else delete state.favorites[mangaId];
+      for (const editionId of getGroupedEditionIds(state, mangaId)) {
+        if (nextFavorite) state.favorites[editionId] = true;
+        else delete state.favorites[editionId];
+      }
+      const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+      if (group) group.favorite = nextFavorite;
     });
     return state;
   });
@@ -2750,8 +3404,10 @@ ipcMain.handle('library:bulkFavorite', async (_event, mangaIds = [], nextValue =
 ipcMain.handle('library:setPrivateFlag', async (_event, mangaId, isPrivate) => {
   updateState((state) => {
     const next = getPrivateMangaIdSet(state);
-    if (isPrivate) next.add(String(mangaId || '').trim());
-    else next.delete(String(mangaId || '').trim());
+    for (const editionId of getGroupedEditionIds(state, mangaId)) {
+      if (isPrivate) next.add(editionId);
+      else next.delete(editionId);
+    }
     state.vault = state.vault || {};
     state.vault.privateMangaIds = [...next];
     return state;
@@ -2764,8 +3420,10 @@ ipcMain.handle('library:setPrivateFlagMany', async (_event, mangaIds = [], isPri
   updateState((state) => {
     const next = getPrivateMangaIdSet(state);
     ids.forEach((mangaId) => {
-      if (isPrivate) next.add(mangaId);
-      else next.delete(mangaId);
+      getGroupedEditionIds(state, mangaId).forEach((editionId) => {
+        if (isPrivate) next.add(editionId);
+        else next.delete(editionId);
+      });
     });
     state.vault = state.vault || {};
     state.vault.privateMangaIds = [...next];
@@ -2832,11 +3490,11 @@ ipcMain.handle('reading:updateProgress', async (_event, payload) => {
 
 ipcMain.handle('reading:updateProgressLight', async (_event, payload) => {
   persistReadingProgress(payload);
-  return { ok: true };
+  return mutationResult({});
 });
 
 ipcMain.handle('reading:setReadStatus', async (_event, mangaId, isRead, chapterIds = []) => {
-  updateState((state) => {
+  updateStateSegments({ reader: ['chapterReadStatus', 'progress', 'readStatus'] }, (state) => {
     const ids = Array.isArray(chapterIds) ? chapterIds : [];
     if (ids.length > 0) {
       ids.forEach((chapterId) => {
@@ -2861,7 +3519,7 @@ ipcMain.handle('reading:setReadStatus', async (_event, mangaId, isRead, chapterI
 });
 
 ipcMain.handle('reading:setReadStatusLight', async (_event, mangaId, isRead, chapterIds = []) => {
-  updateState((state) => {
+  updateStateSegments({ reader: ['chapterReadStatus', 'progress', 'readStatus'] }, (state) => {
     for (const chapterId of Array.isArray(chapterIds) ? chapterIds : []) {
       if (isRead) state.chapterReadStatus[chapterId] = true;
       else {
@@ -2874,11 +3532,11 @@ ipcMain.handle('reading:setReadStatusLight', async (_event, mangaId, isRead, cha
     return state;
   });
   scheduleInteractiveDerivedSync();
-  return { ok: true, mangaId, isRead: Boolean(isRead) };
+  return mutationResult({ mangaId, isRead: Boolean(isRead) });
 });
 
 ipcMain.handle('reading:setChapterReadStatus', async (_event, mangaId, chapterId, isRead, pageCount = 0) => {
-  updateState((state) => {
+  updateStateSegments({ reader: ['chapterReadStatus', 'progress'] }, (state) => {
     if (isRead) {
       state.chapterReadStatus[chapterId] = true;
       state.progress[chapterId] = {
@@ -2901,7 +3559,7 @@ ipcMain.handle('reading:setChapterReadStatus', async (_event, mangaId, chapterId
 });
 
 ipcMain.handle('reading:setChapterReadStatusLight', async (_event, mangaId, chapterId, isRead, pageCount = 0) => {
-  updateState((state) => {
+  updateStateSegments({ reader: ['chapterReadStatus', 'progress'] }, (state) => {
     if (isRead) {
       state.chapterReadStatus[chapterId] = true;
       state.progress[chapterId] = {
@@ -2919,7 +3577,7 @@ ipcMain.handle('reading:setChapterReadStatusLight', async (_event, mangaId, chap
     return state;
   });
   scheduleInteractiveDerivedSync();
-  return { ok: true, mangaId, chapterId, isRead: Boolean(isRead), pageCount };
+  return mutationResult({ mangaId, chapterId, isRead: Boolean(isRead), pageCount });
 });
 
 ipcMain.handle('reading:resetProgress', async (_event, mangaId, chapterIds = []) => {
@@ -3030,7 +3688,7 @@ ipcMain.handle('tags:toggleForMangaLight', async (_event, mangaId, tagId) => {
   if (isAssigned) addTagToManga(mangaId, tagId);
   else removeTagFromManga(mangaId, tagId);
   scheduleInteractiveDerivedSync();
-  return { ok: true, mangaId, tagId, isAssigned };
+  return mutationResult({ mangaId, tagId, isAssigned });
 });
 
 ipcMain.handle('tags:addMany', async (_event, tagId, mangaIds = []) => {
@@ -3038,7 +3696,29 @@ ipcMain.handle('tags:addMany', async (_event, tagId, mangaIds = []) => {
   if (ids.length > 0) {
     updateState((state) => {
       for (const mangaId of ids) {
-        state.mangaTags[mangaId] = [...new Set([...(state.mangaTags[mangaId] || []), tagId])];
+        for (const editionId of getGroupedEditionIds(state, mangaId)) {
+          state.mangaTags[editionId] = [...new Set([...(state.mangaTags[editionId] || []), tagId])];
+        }
+        const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+        if (group) group.tagIds = [...new Set([...(group.tagIds || []), tagId])];
+      }
+      return state;
+    });
+  }
+  return buildInteractivePayload();
+});
+
+ipcMain.handle('tags:removeMany', async (_event, tagId, mangaIds = []) => {
+  const ids = [...new Set((Array.isArray(mangaIds) ? mangaIds : []).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (ids.length > 0) {
+    updateState((state) => {
+      for (const mangaId of ids) {
+        for (const editionId of getGroupedEditionIds(state, mangaId)) {
+          state.mangaTags[editionId] = (state.mangaTags[editionId] || []).filter((id) => id !== tagId);
+          if (state.mangaTags[editionId].length === 0) delete state.mangaTags[editionId];
+        }
+        const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+        if (group) group.tagIds = (group.tagIds || []).filter((id) => id !== tagId);
       }
       return state;
     });
@@ -3048,8 +3728,8 @@ ipcMain.handle('tags:addMany', async (_event, tagId, mangaIds = []) => {
 
 /* ---------- Collections ---------- */
 
-ipcMain.handle('collections:create', async (_event, name, description, color) => {
-  createCollection(name, description, color);
+ipcMain.handle('collections:create', async (_event, name, description, color, appearance) => {
+  createCollection(name, description, color, normalizeCollectionAppearance(appearance));
   return buildInteractivePayload();
 });
 
@@ -3071,7 +3751,7 @@ ipcMain.handle('collections:addManga', async (_event, collectionId, mangaId) => 
 ipcMain.handle('collections:addMangaLight', async (_event, collectionId, mangaId) => {
   addMangaToCollection(collectionId, mangaId);
   scheduleInteractiveDerivedSync();
-  return { ok: true, collectionId, mangaId, isAssigned: true };
+  return mutationResult({ collectionId, mangaId, isAssigned: true });
 });
 
 ipcMain.handle('collections:removeManga', async (_event, collectionId, mangaId) => {
@@ -3082,7 +3762,7 @@ ipcMain.handle('collections:removeManga', async (_event, collectionId, mangaId) 
 ipcMain.handle('collections:removeMangaLight', async (_event, collectionId, mangaId) => {
   removeMangaFromCollection(collectionId, mangaId);
   scheduleInteractiveDerivedSync();
-  return { ok: true, collectionId, mangaId, isAssigned: false };
+  return mutationResult({ collectionId, mangaId, isAssigned: false });
 });
 
 ipcMain.handle('collections:addMany', async (_event, collectionId, mangaIds = []) => {
@@ -3091,7 +3771,31 @@ ipcMain.handle('collections:addMany', async (_event, collectionId, mangaIds = []
     updateState((state) => {
       const collection = state.collections?.[collectionId];
       if (collection) {
-        collection.mangaIds = [...new Set([...(collection.mangaIds || []), ...ids])];
+        const expandedIds = [...new Set(ids.flatMap((mangaId) => getGroupedEditionIds(state, mangaId)))];
+        collection.mangaIds = [...new Set([...(collection.mangaIds || []), ...expandedIds])];
+        for (const mangaId of ids) {
+          const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+          if (group) group.collectionIds = [...new Set([...(group.collectionIds || []), collectionId])];
+        }
+      }
+      return state;
+    });
+  }
+  return buildInteractivePayload();
+});
+
+ipcMain.handle('collections:removeMany', async (_event, collectionId, mangaIds = []) => {
+  const ids = [...new Set((Array.isArray(mangaIds) ? mangaIds : []).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (ids.length > 0) {
+    updateState((state) => {
+      const collection = state.collections?.[collectionId];
+      if (collection) {
+        const expandedIds = new Set(ids.flatMap((mangaId) => getGroupedEditionIds(state, mangaId)));
+        collection.mangaIds = (collection.mangaIds || []).filter((id) => !expandedIds.has(id));
+        for (const mangaId of ids) {
+          const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+          if (group) group.collectionIds = (group.collectionIds || []).filter((id) => id !== collectionId);
+        }
       }
       return state;
     });
@@ -3111,6 +3815,7 @@ ipcMain.handle('smartCollections:save', async (_event, collection) => {
       description: String(collection?.description || previous.description || '').trim(),
       icon: String(collection?.icon || previous.icon || 'layers').trim(),
       color: String(collection?.color || previous.color || '#64748b').trim(),
+      appearance: normalizeCollectionAppearance(collection?.appearance || previous.appearance),
       rules: collection?.rules && typeof collection.rules === 'object' ? collection.rules : (previous.rules || { type: 'unread' }),
       builtIn: Boolean(previous.builtIn && collection?.builtIn !== false)
     };
@@ -4275,7 +4980,7 @@ ipcMain.handle('backup:import', async () => {
     title: 'Importer une sauvegarde Sawa',
     properties: ['openFile'],
     filters: [
-      { name: 'Sawa Backup', extensions: ['sawa', 'json'] }
+      { name: 'Sawa Backup', extensions: ['sawa-backup', 'sawa', 'json'] }
     ]
   });
 
@@ -4284,7 +4989,8 @@ ipcMain.handle('backup:import', async () => {
   }
 
   try {
-    const importResult = importBackup(result.filePaths[0]);
+    const importResult = await importBackup(result.filePaths[0]);
+    if (!importResult?.restored) return importResult;
     restartWatchers();
     return { ...(await buildPayloadAfterStructuralScan()), ...importResult };
   } catch (error) {
@@ -4298,13 +5004,13 @@ ipcMain.handle('backup:list', async () => {
 
 ipcMain.handle('backup:export', async () => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const defaultName = `sawa-backup-${timestamp}.sawa`;
+  const defaultName = `sawa-backup-${timestamp}.sawa-backup`;
 
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Exporter la sauvegarde Sawa',
     defaultPath: defaultName,
     filters: [
-      { name: 'Sawa Backup', extensions: ['sawa'] }
+      { name: 'Sawa Backup', extensions: ['sawa-backup'] }
     ]
   });
 
@@ -4313,10 +5019,7 @@ ipcMain.handle('backup:export', async () => {
   }
 
   try {
-    // Export the current state file directly
-    const stateData = loadState();
-    fs.writeFileSync(result.filePath, JSON.stringify(stateData, null, 2), 'utf-8');
-    return { exported: true, path: result.filePath };
+    return await exportBackup(result.filePath);
   } catch (error) {
     return { exported: false, error: error?.message || 'Export failed' };
   }
@@ -4352,17 +5055,15 @@ ipcMain.handle('ui:updateSettings', async (_event, patch) => {
 
 ipcMain.handle('ui:updateSettingsLight', async (_event, patch) => {
   let nextUi = null;
-  updateState((state) => {
+  updateStateSegments({ root: ['ui'] }, (state) => {
     nextUi = applyUiSettingsPatch(state, patch);
     return state;
   });
   if (patch?.experimental?.schedulerProfile) {
     jobOrchestrator.setProfile(normalizeJobProfile(patch.experimental.schedulerProfile));
   }
-  return {
-    ok: true,
-    ui: nextUi || {}
-  };
+  configurePerfDiagnostics(Boolean(nextUi?.experimental?.performanceDiagnostics));
+  return mutationResult({ ui: nextUi || {} });
 });
 
 ipcMain.handle('ui:pickBackgroundImage', async () => {
@@ -4444,19 +5145,28 @@ ipcMain.handle('ui:removeBackgroundImage', async () => {
 });
 
 ipcMain.handle('session:saveTabs', async (_event, payload) => {
-  updateState((state) => {
-    if (payload?.version === 2 && Array.isArray(payload?.workspaces)) {
-      state.session = {
-        version: 2,
-        activeWorkspaceId: payload.activeWorkspaceId ?? null,
-        workspaces: payload.workspaces
-      };
-    } else {
-      state.session = {
-        tabs: Array.isArray(payload?.tabs) ? payload.tabs : [],
-        activeTabId: payload?.activeTabId ?? null
-      };
-    }
+  const persisted = loadState();
+  const rawLibrary = rawLibrarySnapshot || readLibrarySnapshot() || { allMangas: [], categories: [] };
+  const privacyModel = buildVaultPrivacyModel(rawLibrary, persisted);
+  const privateChapterIds = new Set(
+    (rawLibrary?.allMangas || [])
+      .filter((manga) => privacyModel.allPrivateIds.has(manga.id))
+      .flatMap((manga) => (manga.chapters || []).flatMap((chapter) => [
+        chapter.id,
+        chapter.contentId,
+        chapter.locationId,
+        chapter.legacyId
+      ]))
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
+  const sanitizedPayload = sanitizeSessionSearchPrivacy(payload, {
+    vaultLocked: isVaultLocked(persisted) || Boolean(persisted?.vault?.stealthMode),
+    privateMangaIds: privacyModel.allPrivateIds,
+    privateChapterIds
+  });
+  updateStateSegments({ root: ['session'] }, (state) => {
+    state.session = normalizePersistedSessionPayload(sanitizedPayload);
     return state;
   });
   return true;
@@ -4537,14 +5247,11 @@ ipcMain.handle('vault:updatePrefs', async (_event, patch = {}) => {
 
 ipcMain.handle('vault:updatePrefsLight', async (_event, patch = {}) => {
   let nextVault = null;
-  updateState((state) => {
+  updateStateSegments({ root: ['vault'] }, (state) => {
     nextVault = applyVaultPrefsPatch(state, patch);
     return state;
   });
-  return {
-    ok: true,
-    vault: nextVault || {}
-  };
+  return mutationResult({ vault: nextVault || {} });
 });
 
 /* ---------- Window ---------- */
@@ -4640,6 +5347,7 @@ ipcMain.handle('maintenance:getStats', async (_event, options = {}) => {
       rss: memUsage.rss
     },
     syncStatus: latestSyncStatus,
+    diagnostics: getDiagnosticsSnapshot(),
     derivedDbPath: getDerivedDbPath(),
     derivedSnapshot: getSnapshotMeta(),
     jobs: listJobs(),
@@ -4667,6 +5375,161 @@ ipcMain.handle('maintenance:getDuplicateCandidates', async () => ({
   candidates: await buildVisualDuplicateCandidates()
 }));
 
+function getClientIdentityState(state = loadState()) {
+  return buildClientPersistedState(state, rawLibrarySnapshot || { allMangas: [] });
+}
+
+function assertVisibleWorkMutation({ mangaIds = [], groupId = null } = {}) {
+  const state = loadState();
+  const privateIds = buildVaultPrivacyModel(rawLibrarySnapshot || { allMangas: [] }, state).allPrivateIds;
+  const group = groupId ? state.workGroups?.[groupId] : null;
+  const affectedIds = [...new Set([
+    ...(mangaIds || []),
+    ...(group?.editionIds || [])
+  ])];
+  const hasPrivate = Boolean(group?.private) || affectedIds.some((mangaId) => privateIds.has(mangaId));
+  const hasPublic = affectedIds.some((mangaId) => !privateIds.has(mangaId));
+  if (hasPrivate && hasPublic) {
+    throw new Error('Regroupement refusé: contenu public et coffre ne peuvent pas être mélangés.');
+  }
+  if (hasPrivate && (isVaultLocked(state) || state?.vault?.stealthMode)) {
+    throw new Error('Cette opération nécessite le déverrouillage du coffre.');
+  }
+}
+
+ipcMain.handle('identity:listSuggestions', async () => ({
+  ok: true,
+  suggestions: (getClientIdentityState().identitySuggestions || [])
+    .filter((entry) => entry.status === 'pending')
+}));
+
+function buildWorkOrganizationPatch(state = loadState()) {
+  const clientState = buildClientPersistedState(state, rawLibrarySnapshot || { allMangas: [] });
+  const hidePrivateGroups = isVaultLocked(state) || Boolean(state?.vault?.stealthMode);
+  const privateIds = hidePrivateGroups
+    ? buildVaultPrivacyModel(rawLibrarySnapshot || { allMangas: [] }, state).allPrivateIds
+    : new Set();
+  const workGroups = Object.fromEntries(Object.entries(clientState.workGroups || {})
+    .filter(([, group]) => !(group.editionIds || []).some((mangaId) => privateIds.has(mangaId))));
+  return {
+    workGroups: workGroups,
+    favorites: clientState.favorites || {},
+    mangaTags: clientState.mangaTags || {},
+    collections: clientState.collections || {}
+  };
+}
+
+ipcMain.handle('identity:analyze', async () => {
+  try {
+    const result = await runIdentityAnalysis();
+    if (!result?.ok) {
+      if (result?.stale) scheduleIdentityAnalysis(500);
+      return {
+        ok: false,
+        stale: Boolean(result?.stale),
+        retryable: Boolean(result?.retryable),
+        revision: stateRevision,
+        error: result?.stale ? 'Analyse devenue obsolète; une nouvelle analyse est planifiée.' : result?.error
+      };
+    }
+    const clientState = getClientIdentityState();
+    stateRevision += 1;
+    return {
+      ok: true,
+      exactMoveCount: result.exactMoveCount,
+      ambiguousCount: result.ambiguousCount,
+      mediaIssues: clientState.identityMediaIssues || [],
+      suggestions: (clientState.identitySuggestions || []).filter((entry) => entry.status === 'pending'),
+      revision: stateRevision,
+      patch: {
+        identitySuggestions: clientState.identitySuggestions || [],
+        identityMediaIssues: clientState.identityMediaIssues || [],
+        ...buildWorkOrganizationPatch()
+      }
+    };
+  } catch (error) {
+    return { ok: false, revision: stateRevision, error: error?.message || 'Analyse d’identité impossible.' };
+  }
+});
+
+ipcMain.handle('identity:decideSuggestion', async (_event, input = {}) => {
+  try {
+    const suggestionId = String(input?.suggestionId || '').trim();
+    const decision = input?.decision === 'accept' ? 'accept' : 'reject';
+    if (!suggestionId || suggestionId.length > 160) {
+      return { ok: false, revision: stateRevision, error: 'Suggestion invalide.' };
+    }
+    const visibleSuggestion = (getClientIdentityState().identitySuggestions || [])
+      .find((entry) => entry.id === suggestionId && entry.status === 'pending');
+    if (!visibleSuggestion) {
+      return { ok: false, revision: stateRevision, error: 'Suggestion introuvable ou coffre verrouillé.' };
+    }
+    const result = identityService.decideSuggestion(suggestionId, decision);
+    const clientState = getClientIdentityState();
+    stateRevision += 1;
+    return {
+      ok: result.ok,
+      suggestion: (clientState.identitySuggestions || []).find((entry) => entry.id === suggestionId),
+      revision: stateRevision,
+      patch: {
+        identitySuggestions: clientState.identitySuggestions || [],
+        ...buildWorkOrganizationPatch()
+      }
+    };
+  } catch (error) {
+    return { ok: false, revision: stateRevision, error: error?.message || 'Décision impossible.' };
+  }
+});
+
+ipcMain.handle('works:groupEditions', async (_event, input = {}) => {
+  try {
+    const mangaIds = [...new Set((Array.isArray(input?.mangaIds) ? input.mangaIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean))]
+      .slice(0, 24);
+    assertVisibleWorkMutation({ mangaIds });
+    const result = identityService.groupEditions(mangaIds, {
+      title: String(input?.title || '').trim().slice(0, 300),
+      preferredEditionId: String(input?.preferredEditionId || '').trim() || null
+    });
+    stateRevision += 1;
+    return {
+      ...result,
+      revision: stateRevision,
+      patch: buildWorkOrganizationPatch()
+    };
+  } catch (error) {
+    return { ok: false, revision: stateRevision, error: error?.message || 'Regroupement impossible.' };
+  }
+});
+
+ipcMain.handle('works:ungroup', async (_event, groupId) => {
+  const normalizedGroupId = String(groupId || '').trim();
+  assertVisibleWorkMutation({ groupId: normalizedGroupId });
+  const result = identityService.ungroup(normalizedGroupId);
+  stateRevision += 1;
+  return {
+    ...result,
+    revision: stateRevision,
+    patch: buildWorkOrganizationPatch(),
+    error: result.ok ? undefined : 'Œuvre introuvable.'
+  };
+});
+
+ipcMain.handle('works:setPreferredEdition', async (_event, input = {}) => {
+  const groupId = String(input?.groupId || '').trim();
+  const mangaId = String(input?.mangaId || '').trim();
+  assertVisibleWorkMutation({ mangaIds: [mangaId], groupId });
+  const result = identityService.setPreferred(groupId, mangaId);
+  stateRevision += 1;
+  return {
+    ...result,
+    revision: stateRevision,
+    patch: buildWorkOrganizationPatch(),
+    error: result.ok ? undefined : 'Édition invalide.'
+  };
+});
+
 ipcMain.handle('jobs:list', async () => ({
   jobs: listJobs(),
   syncStatus: latestSyncStatus
@@ -4689,12 +5552,17 @@ ipcMain.handle('jobs:retry', async (_event, jobId) => {
 });
 
 ipcMain.handle('search:advanced', async (_event, input = {}) => {
-  const query = typeof input === 'string' ? input : input?.query;
-  const limit = Number.isFinite(Number(input?.limit)) ? Number(input.limit) : 50;
-  return {
-    query: String(query || '').trim(),
-    results: searchDocuments(query, limit)
+  const state = loadState();
+  const rawLibrary = rawLibrarySnapshot || readLibrarySnapshot() || {
+    allMangas: [],
+    categories: []
   };
+  return runPrivacySafeAdvancedSearch({
+    input,
+    state,
+    rawLibrary,
+    searchDocuments
+  });
 });
 
 ipcMain.handle('reader:getVisualPrefs', async (_event, mangaRef = null) => {
@@ -4838,28 +5706,121 @@ ipcMain.handle('comicinfo:export', async (_event, input = {}) => {
   }
 
   const mode = String(input?.mode || 'sidecar').trim();
-  if (mode !== 'sidecar') {
-    return { ok: false, error: 'L export CBZ integre n est pas encore disponible dans cette version.' };
+  const record = buildComicInfoExportRecord(manga);
+  if (mode === 'sidecar') {
+    const targetPath = resolveComicInfoSidecarTargetPath(manga);
+    if (!targetPath) {
+      return { ok: false, error: 'Aucun emplacement sidecar valide pour ce manga.' };
+    }
+    try {
+      const result = writeComicInfoSidecar(targetPath, record);
+      return { ok: true, path: result.path, preview: buildComicInfoXml(record) };
+    } catch (error) {
+      return { ok: false, error: error?.message || 'Export ComicInfo impossible.' };
+    }
   }
 
-  const targetPath = resolveComicInfoSidecarTargetPath(manga);
-  if (!targetPath) {
-    return { ok: false, error: 'Aucun emplacement sidecar valide pour ce manga.' };
+  if (!['embed-cbz', 'create-cbz', 'manga-cbz'].includes(mode)) {
+    return { ok: false, error: 'Mode d export ComicInfo invalide.' };
+  }
+  const conflictPolicy = ['rename', 'replace', 'skip'].includes(String(input?.conflictPolicy || '').trim())
+    ? String(input.conflictPolicy).trim()
+    : 'rename';
+
+  if (mode === 'manga-cbz') {
+    const chapters = (manga.chapters || []).filter((chapter) => chapter?.path);
+    if (chapters.length === 0) return { ok: false, error: 'Aucun chapitre exportable.' };
+    const destination = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choisir le dossier des CBZ',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (destination.canceled || !destination.filePaths?.[0]) {
+      return { ok: false, cancelled: true };
+    }
+    const destinationRoot = destination.filePaths[0];
+    const jobs = chapters.map((chapter, index) => {
+      const chapterLabel = chapter.displayTitle || chapter.name || chapter.title || `Chapitre ${index + 1}`;
+      const fileName = `${sanitizeCbzFileName(chapterLabel, `Chapitre ${index + 1}`)}.cbz`;
+      return jobOrchestrator.enqueue({
+        kind: 'export',
+        requeueable: false,
+        payload: {
+          sourcePath: chapter.path,
+          targetPath: path.join(destinationRoot, fileName),
+          xml: buildComicInfoXml(buildComicInfoExportRecord(manga, chapter)),
+          mangaId: manga.id,
+          chapterId: chapter.id,
+          mode: path.extname(chapter.path).toLowerCase() === '.cbz' ? 'copy-cbz' : 'create-cbz',
+          conflictPolicy,
+          replaceSource: false
+        }
+      });
+    });
+    if (input?.background === false) {
+      await jobOrchestrator.process();
+      const completedJobs = jobs.map((job) => getJob(job.id));
+      return {
+        ok: completedJobs.every((job) => job?.status === 'done'),
+        queued: false,
+        jobs: completedJobs,
+        error: completedJobs.find((job) => job?.status !== 'done')?.lastError || null
+      };
+    }
+    return { ok: true, queued: true, jobs, jobCount: jobs.length };
   }
 
-  try {
-    const result = writeComicInfoSidecar(targetPath, buildComicInfoExportRecord(manga));
+  const chapterRef = String(input?.chapterId || '').trim();
+  const chapter = (manga.chapters || []).find((entry) => (
+    !chapterRef || entry.id === chapterRef || entry.contentId === chapterRef || entry.locationId === chapterRef
+  ));
+  if (!chapter?.path || !fs.existsSync(chapter.path)) {
+    return { ok: false, error: 'Chapitre source introuvable.' };
+  }
+  const sourceStats = fs.statSync(chapter.path);
+  if (mode === 'embed-cbz' && (!sourceStats.isFile() || path.extname(chapter.path).toLowerCase() !== '.cbz')) {
+    return { ok: false, error: 'Le chapitre selectionne n est pas un CBZ.' };
+  }
+  if (mode === 'create-cbz' && !sourceStats.isDirectory()) {
+    return { ok: false, error: 'La creation CBZ exige un dossier de chapitre.' };
+  }
+
+  let targetPath = chapter.path;
+  if (mode === 'create-cbz') {
+    const destination = await dialog.showSaveDialog(mainWindow, {
+      title: 'Creer un CBZ avec ComicInfo.xml',
+      defaultPath: `${path.basename(chapter.path)}.cbz`,
+      filters: [{ name: 'Archive CBZ', extensions: ['cbz'] }]
+    });
+    if (destination.canceled || !destination.filePath) return { ok: false, cancelled: true };
+    targetPath = destination.filePath.toLowerCase().endsWith('.cbz')
+      ? destination.filePath
+      : `${destination.filePath}.cbz`;
+  }
+
+  const job = jobOrchestrator.enqueue({
+    kind: 'export',
+    requeueable: false,
+    payload: {
+      sourcePath: chapter.path,
+      targetPath,
+      xml: buildComicInfoXml(buildComicInfoExportRecord(manga, chapter)),
+      mangaId: manga.id,
+      chapterId: chapter.id,
+      mode,
+      conflictPolicy: mode === 'embed-cbz' ? 'replace' : conflictPolicy
+    }
+  });
+  if (input?.background === false) {
+    await jobOrchestrator.process();
+    const completed = getJob(job.id);
     return {
-      ok: true,
-      path: result.path,
-      preview: buildComicInfoXml(buildComicInfoExportRecord(manga))
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error?.message || 'Export ComicInfo impossible.'
+      ok: completed?.status === 'done',
+      job: completed,
+      path: completed?.progress?.resultPath || null,
+      error: completed?.lastError || null
     };
   }
+  return { ok: true, queued: true, job };
 });
 
 ipcMain.handle('sources:listConnectors', async () => {

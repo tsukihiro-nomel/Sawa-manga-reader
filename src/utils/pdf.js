@@ -1,3 +1,5 @@
+import { createAbortableTaskQueue } from './abortableTaskQueue.js';
+
 // pdfjs-dist is loaded on demand so its ~2 MB bundle stays out of the initial chunk and only
 // downloads the first time the user opens a PDF.
 let pdfjsModulePromise = null;
@@ -21,9 +23,24 @@ async function getPdfjs() {
 
 const pdfDocumentCache = new Map();
 const pdfDataCache = new Map();
+export const pdfCanvasRenderQueue = createAbortableTaskQueue(2);
 
 function getDocumentCacheKey(filePath) {
   return String(filePath || '');
+}
+
+export function invalidatePdfDocument(filePath, options = {}) {
+  const key = getDocumentCacheKey(filePath);
+  if (!key) return { documentInvalidated: false, dataInvalidated: false };
+  const cachedDocument = pdfDocumentCache.get(key);
+  const documentInvalidated = pdfDocumentCache.delete(key);
+  if (cachedDocument) {
+    Promise.resolve(cachedDocument)
+      .then((documentProxy) => documentProxy?.destroy?.())
+      .catch(() => {});
+  }
+  const dataInvalidated = options?.includeData === false ? false : pdfDataCache.delete(key);
+  return { documentInvalidated, dataInvalidated };
 }
 
 export function buildPdfDocumentSource(filePath) {
@@ -149,7 +166,7 @@ export async function getPdfPageCount(filePath) {
   return Number(doc?.numPages || 0);
 }
 
-export async function renderPdfPageToCanvas({
+async function renderPdfPageToCanvasNow({
   canvas,
   filePath,
   pageNumber = 1,
@@ -174,7 +191,7 @@ export async function renderPdfPageToCanvas({
     const viewport = page.getViewport({ scale: renderScale });
 
     const actualPixelRatio = Math.max(1, Number(pixelRatio) || 1);
-    const context = canvas.getContext('2d', { alpha: false });
+    const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
     if (!context) return null;
 
     canvas.width = Math.max(1, Math.floor(viewport.width * actualPixelRatio));
@@ -183,6 +200,8 @@ export async function renderPdfPageToCanvas({
     canvas.style.height = `${Math.max(1, Math.floor(viewport.height))}px`;
 
     context.setTransform(actualPixelRatio, 0, 0, actualPixelRatio, 0, 0);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
     context.clearRect(0, 0, viewport.width, viewport.height);
 
     const renderTask = page.render({
@@ -199,17 +218,27 @@ export async function renderPdfPageToCanvas({
       signal.addEventListener('abort', abortHandler, { once: true });
     }
 
-    await renderTask.promise;
-    if (abortHandler) signal?.removeEventListener('abort', abortHandler);
-    if (signal?.aborted) throw new DOMException('PDF render aborted', 'AbortError');
-    return {
-      width: viewport.width,
-      height: viewport.height,
-      pageNumber: safePageNumber
-    };
+    try {
+      await renderTask.promise;
+      if (signal?.aborted) throw new DOMException('PDF render aborted', 'AbortError');
+      return {
+        width: viewport.width,
+        height: viewport.height,
+        pageNumber: safePageNumber
+      };
+    } finally {
+      if (abortHandler) signal?.removeEventListener('abort', abortHandler);
+    }
   } finally {
     page.cleanup();
   }
+}
+
+export function renderPdfPageToCanvas(options = {}) {
+  return pdfCanvasRenderQueue.schedule(
+    () => renderPdfPageToCanvasNow(options),
+    { signal: options.signal }
+  );
 }
 
 export function buildPdfPageDescriptor(filePath, index) {

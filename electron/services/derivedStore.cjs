@@ -18,6 +18,9 @@ try {
 }
 
 const SCHEMA_VERSION = 2;
+const MAX_TERMINAL_JOBS = 200;
+const JOB_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const TERMINAL_JOB_STATUSES = new Set(['done', 'failed', 'interrupted']);
 let database = null;
 let nativeStoreFailed = false;
 
@@ -639,6 +642,26 @@ function upsertJob(job) {
   return normalized;
 }
 
+function mapJobRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    kind: row.kind,
+    priority: row.priority,
+    lane: row.lane,
+    status: row.status,
+    payload: JSON.parse(row.payload_json || '{}'),
+    progress: JSON.parse(row.progress_json || '{}'),
+    attempt: row.attempt,
+    requeueable: Boolean(row.requeueable),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    lastError: row.last_error
+  };
+}
+
 function listJobs() {
   if (!hasNativeStore()) {
     return [...memoryStore.jobs.values()]
@@ -654,26 +677,20 @@ function listJobs() {
            created_at, updated_at, started_at, ended_at, last_error
     FROM jobs
     ORDER BY priority DESC, datetime(created_at) ASC
-  `).all().map((row) => ({
-    id: row.id,
-    kind: row.kind,
-    priority: row.priority,
-    lane: row.lane,
-    status: row.status,
-    payload: JSON.parse(row.payload_json || '{}'),
-    progress: JSON.parse(row.progress_json || '{}'),
-    attempt: row.attempt,
-    requeueable: Boolean(row.requeueable),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    startedAt: row.started_at,
-    endedAt: row.ended_at,
-    lastError: row.last_error
-  }));
+  `).all().map(mapJobRow);
 }
 
 function getJob(jobId) {
-  return listJobs().find((job) => job.id === jobId) || null;
+  const normalizedId = String(jobId || '').trim();
+  if (!normalizedId) return null;
+  if (!hasNativeStore()) return memoryStore.jobs.get(normalizedId) || null;
+  const db = getDatabase();
+  return mapJobRow(db.prepare(`
+    SELECT id, kind, priority, lane, status, payload_json, progress_json, attempt, requeueable,
+           created_at, updated_at, started_at, ended_at, last_error
+    FROM jobs
+    WHERE id = ?
+  `).get(normalizedId));
 }
 
 function removeJob(jobId) {
@@ -683,6 +700,50 @@ function removeJob(jobId) {
   }
   const db = getDatabase();
   db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+}
+
+function terminalJobTime(job) {
+  const timestamp = Date.parse(job?.endedAt || job?.updatedAt || job?.createdAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function selectTerminalJobIdsToPrune(jobs = [], options = {}) {
+  const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+  const maxTerminalJobs = Math.max(
+    0,
+    Number.isFinite(Number(options.maxTerminalJobs))
+      ? Number(options.maxTerminalJobs)
+      : MAX_TERMINAL_JOBS
+  );
+  const maxAgeMs = Math.max(
+    0,
+    Number.isFinite(Number(options.maxAgeMs)) ? Number(options.maxAgeMs) : JOB_HISTORY_TTL_MS
+  );
+  const terminal = (Array.isArray(jobs) ? jobs : [])
+    .filter((job) => TERMINAL_JOB_STATUSES.has(String(job?.status || '')))
+    .map((job) => ({ id: String(job?.id || '').trim(), timestamp: terminalJobTime(job) }))
+    .filter((job) => job.id);
+  const expiredIds = new Set(terminal
+    .filter((job) => job.timestamp <= now - maxAgeMs)
+    .map((job) => job.id));
+  const retained = terminal
+    .filter((job) => !expiredIds.has(job.id))
+    .sort((left, right) => right.timestamp - left.timestamp);
+  retained.slice(maxTerminalJobs).forEach((job) => expiredIds.add(job.id));
+  return [...expiredIds];
+}
+
+function pruneTerminalJobs(options = {}) {
+  const removedIds = selectTerminalJobIdsToPrune(listJobs(), options);
+  if (!removedIds.length) return removedIds;
+  if (!hasNativeStore()) {
+    removedIds.forEach((jobId) => memoryStore.jobs.delete(jobId));
+    return removedIds;
+  }
+  const db = getDatabase();
+  const remove = db.prepare('DELETE FROM jobs WHERE id = ?');
+  db.transaction((jobIds) => jobIds.forEach((jobId) => remove.run(jobId)))(removedIds);
+  return removedIds;
 }
 
 function markRunningJobsInterrupted() {
@@ -961,6 +1022,8 @@ function closeDerivedStore() {
 
 module.exports = {
   SCHEMA_VERSION,
+  MAX_TERMINAL_JOBS,
+  JOB_HISTORY_TTL_MS,
   hasNativeStore,
   getDatabase,
   getSnapshotMeta,
@@ -973,6 +1036,8 @@ module.exports = {
   listJobs,
   getJob,
   removeJob,
+  selectTerminalJobIdsToPrune,
+  pruneTerminalJobs,
   markRunningJobsInterrupted,
   upsertOcrPage,
   listOcrPages,

@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles/globals.css';
+import { shouldEscalateUnhandledRejection } from './utils/fatalErrors.js';
 
 function normalizeErrorMessage(errorLike) {
   if (!errorLike) return 'Erreur inconnue';
@@ -14,11 +15,32 @@ function normalizeErrorMessage(errorLike) {
 }
 
 function FatalScreen({ title = 'Erreur de demarrage', message = 'Une erreur inattendue a interrompu le rendu.' }) {
+  const [actionStatus, setActionStatus] = React.useState('');
+  const safeMessage = String(message || 'Erreur inconnue')
+    .replace(/[A-Za-z]:\\[^\r\n"'<>]+/g, '[chemin local masque]')
+    .slice(0, 600);
+  const runAction = async (label, action) => {
+    setActionStatus(`${label}...`);
+    try {
+      const result = await action();
+      setActionStatus(result?.ok === false ? (result.error || `${label} impossible.`) : `${label}: OK`);
+    } catch (error) {
+      setActionStatus(error?.message || `${label} impossible.`);
+    }
+  };
   return (
     <div className="boot-screen">
       <div className="boot-screen-panel" style={{ maxWidth: 760, textAlign: 'left', justifyItems: 'stretch' }}>
         <p style={{ fontWeight: 700, marginBottom: 6 }}>{title}</p>
-        <p style={{ margin: 0 }}>{message}</p>
+        <p style={{ margin: 0 }}>{safeMessage}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
+          <button type="button" onClick={() => runAction('Rechargement', () => window.mangaAPI.reloadApp())}>Recharger</button>
+          <button type="button" onClick={() => runAction('Redemarrage', () => window.mangaAPI.restartApp({ safeMode: false }))}>Redemarrer</button>
+          <button type="button" onClick={() => runAction('Mode sans echec', () => window.mangaAPI.restartApp({ safeMode: true }))}>Mode sans echec</button>
+          <button type="button" onClick={() => runAction('Copie du diagnostic', () => window.mangaAPI.copyDiagnostics({ message: safeMessage }))}>Copier le diagnostic</button>
+          <button type="button" onClick={() => runAction('Ouverture des diagnostics', () => window.mangaAPI.openDiagnostics())}>Ouvrir les diagnostics</button>
+        </div>
+        {actionStatus ? <p role="status" style={{ margin: '12px 0 0', opacity: 0.8 }}>{actionStatus}</p> : null}
       </div>
     </div>
   );
@@ -58,7 +80,13 @@ function AppRoot() {
       setGlobalError(event?.error || event?.message || 'Erreur runtime');
     };
     const onUnhandledRejection = (event) => {
-      setGlobalError(event?.reason || 'Promesse rejetee non geree');
+      if (shouldEscalateUnhandledRejection(event?.reason)) {
+        setGlobalError(event?.reason || 'Promesse rejetee fatale');
+      } else {
+        // Les echecs recuperables restent visibles dans les outils de diagnostic
+        // sans remplacer durablement toute l interface.
+        console.warn('Unhandled rejection recuperable:', event?.reason);
+      }
     };
     window.addEventListener('error', onWindowError);
     window.addEventListener('unhandledrejection', onUnhandledRejection);

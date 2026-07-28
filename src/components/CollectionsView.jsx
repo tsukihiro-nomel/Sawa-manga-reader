@@ -1,7 +1,13 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { resolveSmartCollection } from '../utils/reader.js';
 import VirtualMangaGrid from './VirtualMangaGrid.jsx';
-import MediaAsset from './MediaAsset.jsx';
+import CollectionCoverPreview from './CollectionCoverPreview.jsx';
+import {
+  COLLECTION_APPEARANCE_OPTIONS,
+  getFeaturedMangaPage,
+  normalizeCollectionAppearance,
+  toggleFeaturedManga
+} from '../utils/collectionAppearance.js';
 import {
   ArchiveIcon,
   BookIcon,
@@ -66,6 +72,7 @@ function defaultSmartCollectionDraft() {
     description: '',
     icon: 'sparkles',
     color: '#64748b',
+    appearance: normalizeCollectionAppearance(null),
     rules: {
       matchMode: 'all',
       sort: 'title-asc',
@@ -83,6 +90,7 @@ function normalizeSmartDraft(collection) {
     description: collection.description || '',
     icon: collection.icon || 'sparkles',
     color: collection.color || '#64748b',
+    appearance: normalizeCollectionAppearance(collection.appearance),
     rules: {
       matchMode: collection.rules?.matchMode === 'any' ? 'any' : 'all',
       sort: collection.rules?.sort || 'title-asc',
@@ -93,14 +101,76 @@ function normalizeSmartDraft(collection) {
   };
 }
 
-function CollectionFormModal({ onClose, onSubmit, initial }) {
+function AppearanceEditor({ value, mangas, onChange }) {
+  const appearance = normalizeCollectionAppearance(value);
+  const [featuredQuery, setFeaturedQuery] = useState('');
+  const [featuredPage, setFeaturedPage] = useState(0);
+  const featuredOptions = useMemo(
+    () => getFeaturedMangaPage(mangas, { query: featuredQuery, page: featuredPage, pageSize: 40 }),
+    [featuredPage, featuredQuery, mangas]
+  );
+  return (
+    <div className="collection-appearance-editor">
+      <div className="collection-appearance-options" role="group" aria-label="Apparence de la collection">
+        {COLLECTION_APPEARANCE_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={appearance.type === option.value ? 'active' : ''}
+            onClick={() => onChange({ ...appearance, type: option.value })}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <CollectionCoverPreview collection={{ appearance }} mangas={mangas} />
+      {mangas.length ? (
+        <details className="collection-featured-picker">
+          <summary>Mangas mis en avant (facultatif)</summary>
+          <input
+            type="search"
+            value={featuredQuery}
+            placeholder="Rechercher un manga…"
+            onChange={(event) => {
+              setFeaturedQuery(event.target.value);
+              setFeaturedPage(0);
+            }}
+          />
+          <div>
+            {featuredOptions.items.map((manga) => (
+              <label key={manga.id}>
+                <input
+                  type="checkbox"
+                  checked={appearance.featuredMangaIds.includes(String(manga.id))}
+                  onChange={() => onChange(toggleFeaturedManga(appearance, manga.id))}
+                />
+                <span>{manga.displayTitle || manga.name}</span>
+              </label>
+            ))}
+          </div>
+          {featuredOptions.totalPages > 1 ? (
+            <div className="collection-featured-pagination">
+              <button type="button" disabled={featuredOptions.page === 0} onClick={() => setFeaturedPage((page) => Math.max(0, page - 1))}>Précédents</button>
+              <span>{featuredOptions.page + 1}/{featuredOptions.totalPages} · {featuredOptions.total} mangas</span>
+              <button type="button" disabled={featuredOptions.page >= featuredOptions.totalPages - 1} onClick={() => setFeaturedPage((page) => Math.min(featuredOptions.totalPages - 1, page + 1))}>Suivants</button>
+            </div>
+          ) : null}
+          <small>Jusqu’à quatre mangas. Si l’un disparaît, Sawa choisit automatiquement le suivant.</small>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function CollectionFormModal({ onClose, onSubmit, initial, mangas = [] }) {
   const [name, setName] = useState(initial?.name || '');
   const [description, setDescription] = useState(initial?.description || '');
+  const [appearance, setAppearance] = useState(() => normalizeCollectionAppearance(initial?.appearance));
 
   const handleSubmit = (event) => {
     event.preventDefault();
     if (!name.trim()) return;
-    onSubmit({ name: name.trim(), description: description.trim() });
+    onSubmit({ name: name.trim(), description: description.trim(), appearance });
     onClose();
   };
 
@@ -122,6 +192,7 @@ function CollectionFormModal({ onClose, onSubmit, initial }) {
             Description
             <textarea rows="3" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Une courte intention..." />
           </label>
+          <AppearanceEditor value={appearance} mangas={mangas} onChange={setAppearance} />
           <div className="modal-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Annuler</button>
             <button type="submit" className="primary-button" disabled={!name.trim()}>{initial ? 'Enregistrer' : 'Creer'}</button>
@@ -187,7 +258,7 @@ function ConditionEditor({ condition, index, tags, collections, onChange, onRemo
   );
 }
 
-function SmartCollectionModal({ initial, tags, collections, onClose, onSubmit }) {
+function SmartCollectionModal({ initial, tags, collections, mangas = [], onClose, onSubmit }) {
   const [draft, setDraft] = useState(() => normalizeSmartDraft(initial));
 
   const handleConditionChange = (index, nextCondition) => {
@@ -295,6 +366,12 @@ function SmartCollectionModal({ initial, tags, collections, onClose, onSubmit })
             </div>
           </div>
 
+          <AppearanceEditor
+            value={draft.appearance}
+            mangas={mangas}
+            onChange={(appearance) => setDraft((current) => ({ ...current, appearance }))}
+          />
+
           <div className="modal-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Annuler</button>
             <button type="submit" className="primary-button" disabled={!draft.name.trim()}>Enregistrer</button>
@@ -319,25 +396,7 @@ function CollectionCard({ collection, mangas, onOpen, onContextMenu, pinned, onT
           </div>
         </div>
         <p>{collection.description || (isSmart ? 'Vue dynamique basee sur tes regles.' : 'Collection manuelle pour ranger tes series.')}</p>
-        <div className="collection-showcase-covers">
-          {mangas.slice(0, 4).map((manga) => (
-            <div key={manga.id} className="collection-showcase-cover">
-              {manga.coverSrc || manga.coverMediaType === 'pdf' ? (
-                <MediaAsset
-                  src={manga.coverSrc}
-                  alt={manga.displayTitle}
-                  loading="lazy"
-                  className="thumb-smooth thumb-media"
-                  mediaType={manga.coverMediaType || 'image'}
-                  filePath={manga.coverFilePath}
-                  pageNumber={manga.coverPageNumber || 1}
-                  maxWidth={160}
-                  maxHeight={240}
-                />
-              ) : <div className="cover-fallback cover-fallback-sm">{(manga.displayTitle || '?')[0]}</div>}
-            </div>
-          ))}
-        </div>
+        <CollectionCoverPreview collection={collection} mangas={mangas} />
       </button>
       <button type="button" className={`ghost-button collection-showcase-pin ${pinned ? 'active' : ''}`} onClick={() => onTogglePin(collection)}>
         <PinIcon size={14} /> {pinned ? 'Epinglee' : 'Epingler'}
@@ -351,6 +410,7 @@ function CollectionDetailView({
   mangas,
   onBack,
   onOpenManga,
+  onOpenMangaInBackgroundTab,
   onToggleFavorite,
   onEditCollection,
   onDeleteCollection,
@@ -360,7 +420,11 @@ function CollectionDetailView({
   selectionMode,
   selectedIds,
   onToggleSelect,
-  onToggleSelectionMode
+  onToggleSelectionMode,
+  initialScrollTop = 0,
+  initialScrollPosition = null,
+  scrollKey = '',
+  onScrollPositionChange
 }) {
   return (
     <div className="collection-detail">
@@ -394,7 +458,12 @@ function CollectionDetailView({
         <VirtualMangaGrid
           mangas={mangas}
           className="collection-manga-grid-virtual"
+          initialScrollTop={initialScrollTop}
+          initialScrollPosition={initialScrollPosition}
+          scrollKey={scrollKey}
+          onScrollPositionChange={onScrollPositionChange}
           onOpen={onOpenManga}
+          onOpenBackground={onOpenMangaInBackgroundTab}
           onToggleFavorite={onToggleFavorite}
           onContextMenu={onContextMenu}
           selectionMode={selectionMode}
@@ -410,6 +479,7 @@ function CollectionsView({
   allMangas = [],
   persisted = {},
   onOpenManga,
+  onOpenMangaInBackgroundTab,
   onToggleFavorite,
   onCreateCollection,
   onDeleteCollection,
@@ -424,7 +494,12 @@ function CollectionsView({
   selectionMode,
   selectedMangaIds,
   onToggleSelect,
-  onSelectionModeChange
+  onSelectionModeChange,
+  onVisibleSelectionChange,
+  initialScrollTop = 0,
+  initialScrollPosition = null,
+  scrollKey = '',
+  onScrollPositionChange
 }) {
   const [showCreate, setShowCreate] = useState(false);
   const [activeCollectionId, setActiveCollectionId] = useState(null);
@@ -465,6 +540,13 @@ function CollectionsView({
     };
   }, [activeCollectionId, smartCollections, allMangas, persisted, mangaById]);
 
+  useEffect(() => {
+    onVisibleSelectionChange?.({
+      viewId: activeCollection ? `collection:${activeCollection.collection.id}` : 'overview',
+      ids: activeCollection ? activeCollection.mangas.map((manga) => manga.id) : []
+    });
+  }, [activeCollection, onVisibleSelectionChange]);
+
   const handleTogglePin = (collection) => {
     const type = collection.isSmart ? 'smart-collection' : 'collection';
     onToggleSidebarPin?.({
@@ -484,6 +566,7 @@ function CollectionsView({
           mangas={activeCollection.mangas}
           onBack={() => setActiveCollectionId(null)}
           onOpenManga={onOpenManga}
+          onOpenMangaInBackgroundTab={onOpenMangaInBackgroundTab}
           onToggleFavorite={onToggleFavorite}
           onEditCollection={() => {
             if (activeCollection.collection.isSmart) setEditingSmartCollection(activeCollection.collection);
@@ -501,11 +584,16 @@ function CollectionsView({
           selectedIds={selectedMangaIds}
           onToggleSelect={onToggleSelect}
           onToggleSelectionMode={onSelectionModeChange}
+          initialScrollTop={initialScrollTop}
+          initialScrollPosition={initialScrollPosition}
+          scrollKey={scrollKey}
+          onScrollPositionChange={onScrollPositionChange}
         />
 
         {editingCollection ? (
           <CollectionFormModal
             initial={editingCollection}
+            mangas={activeCollection.mangas}
             onClose={() => setEditingCollection(null)}
             onSubmit={(data) => {
               onUpdateCollection?.(editingCollection.id, data);
@@ -519,6 +607,7 @@ function CollectionsView({
             initial={editingSmartCollection}
             tags={tagList}
             collections={manualCollections}
+            mangas={activeCollection.mangas}
             onClose={() => setEditingSmartCollection(null)}
             onSubmit={(collection) => {
               onSaveSmartCollection?.(collection);
@@ -600,9 +689,10 @@ function CollectionsView({
 
       {showCreate ? (
         <CollectionFormModal
+          mangas={allMangas}
           onClose={() => setShowCreate(false)}
           onSubmit={(data) => {
-            onCreateCollection(data.name, data.description);
+            onCreateCollection(data.name, data.description, data.appearance);
             setShowCreate(false);
           }}
         />
@@ -613,6 +703,7 @@ function CollectionsView({
           initial={editingSmartCollection.id ? editingSmartCollection : null}
           tags={tagList}
           collections={manualCollections}
+          mangas={allMangas}
           onClose={() => setEditingSmartCollection(null)}
           onSubmit={(collection) => {
             onSaveSmartCollection?.(collection);

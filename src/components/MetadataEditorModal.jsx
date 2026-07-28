@@ -24,7 +24,8 @@ export default function MetadataEditorModal({
   onSave,
   onUpdateLocks,
   onImportComicInfo,
-  onExportComicInfo
+  onExportComicInfo,
+  onOpenCoverManager
 }) {
   const [form, setForm] = useState({
     title: '',
@@ -37,6 +38,8 @@ export default function MetadataEditorModal({
   });
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [exportChapterId, setExportChapterId] = useState('__all__');
+  const [conflictPolicy, setConflictPolicy] = useState('rename');
 
   useEffect(() => {
     setForm({
@@ -50,6 +53,8 @@ export default function MetadataEditorModal({
     });
     setStatus('');
     setBusy(false);
+    setExportChapterId('__all__');
+    setConflictPolicy('rename');
   }, [manga]);
 
   const fieldLocks = useMemo(() => manga.metadataLocks || {}, [manga.metadataLocks]);
@@ -78,22 +83,38 @@ export default function MetadataEditorModal({
     await onUpdateLocks(manga.id, { [field]: value });
   }
 
-  async function handleExport() {
+  async function handleExport(options = {}) {
     if (!onExportComicInfo) return;
     setBusy(true);
     setStatus('');
     try {
-      const result = await onExportComicInfo(manga.id);
+      const result = await onExportComicInfo(manga.id, options);
       if (result?.ok === false) {
         setStatus(result.error || 'Impossible d exporter ComicInfo.');
       } else {
-        setStatus(result?.path ? `ComicInfo exporte vers ${result.path}` : 'ComicInfo exporte.');
+        setStatus(result?.queued
+          ? `${result.jobCount || result.jobs?.length || 1} export(s) CBZ ajoute(s) a la file des taches.`
+          : (result?.path ? `ComicInfo exporte vers ${result.path}` : 'ComicInfo exporte.'));
       }
     } catch (error) {
       setStatus(error?.message || 'Impossible d exporter ComicInfo.');
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleCbzExport() {
+    if (exportChapterId === '__all__') {
+      handleExport({ mode: 'manga-cbz', conflictPolicy });
+      return;
+    }
+    const chapter = (manga.chapters || []).find((entry) => entry.id === exportChapterId);
+    if (!chapter) {
+      setStatus('Selectionne un chapitre valide.');
+      return;
+    }
+    const mode = /\.cbz$/i.test(String(chapter.path || '')) ? 'embed-cbz' : 'create-cbz';
+    handleExport({ mode, chapterId: chapter.id, conflictPolicy });
   }
 
   function handleSave() {
@@ -127,8 +148,11 @@ export default function MetadataEditorModal({
             <p>Tu peux verrouiller un champ pour empecher tout ecrasement automatique.</p>
           </div>
           <div className="metadata-editor-head-actions">
-            <button type="button" className="ghost-button" onClick={handleExport} disabled={busy}>
-              <SparklesIcon size={14} /> Exporter ComicInfo
+            <button type="button" className="ghost-button" onClick={onOpenCoverManager} disabled={busy}>
+              Gérer la couverture
+            </button>
+            <button type="button" className="ghost-button" onClick={() => handleExport()} disabled={busy}>
+              <SparklesIcon size={14} /> Sidecar ComicInfo
             </button>
             <button type="button" className="ghost-button" onClick={handleImport} disabled={busy}>
               <SparklesIcon size={14} /> {busy ? 'Import...' : 'Importer ComicInfo'}
@@ -138,6 +162,33 @@ export default function MetadataEditorModal({
         </div>
 
         {status ? <div className="metadata-editor-status">{status}</div> : null}
+
+        {(manga.chapters || []).length > 0 ? (
+          <div className="metadata-export-panel">
+            <label>
+              <span>Contenu CBZ</span>
+              <select value={exportChapterId} onChange={(event) => setExportChapterId(event.target.value)} disabled={busy}>
+                <option value="__all__">Manga entier - un CBZ par chapitre</option>
+                {(manga.chapters || []).map((chapter, index) => (
+                  <option key={chapter.id} value={chapter.id}>
+                    {chapter.displayTitle || chapter.name || chapter.title || `Chapitre ${index + 1}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Si le fichier existe</span>
+              <select value={conflictPolicy} onChange={(event) => setConflictPolicy(event.target.value)} disabled={busy}>
+                <option value="rename">Renommer automatiquement</option>
+                <option value="replace">Remplacer avec sauvegarde</option>
+                <option value="skip">Ignorer</option>
+              </select>
+            </label>
+            <button type="button" className="primary-button" onClick={handleCbzExport} disabled={busy}>
+              <SparklesIcon size={14} /> {busy ? 'Preparation...' : 'Exporter en CBZ'}
+            </button>
+          </div>
+        ) : null}
 
         <div className="metadata-editor-grid">
           {EDITABLE_FIELDS.map((field) => (

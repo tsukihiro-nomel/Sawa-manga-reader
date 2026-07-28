@@ -124,6 +124,7 @@ describe('source runtime state', () => {
     const { sourceRuntime, userDataStoreDir } = loadSourceRuntime(baseDir);
 
     const started = await sourceRuntime.startRuntime();
+    await sourceRuntime.flushSourcesStateWrites();
     const persisted = JSON.parse(
       fs.readFileSync(path.join(userDataStoreDir, 'sources.json'), 'utf8')
     );
@@ -168,6 +169,7 @@ describe('source runtime state', () => {
       destinationCategoryId: 'cat-test',
       localPath: 'C:\\bibliotheque\\Serie 1\\Chapitre 1'
     });
+    await sourceRuntime.flushSourcesStateWrites();
 
     const persisted = JSON.parse(
       fs.readFileSync(path.join(userDataStoreDir, 'sources.json'), 'utf8')
@@ -227,6 +229,48 @@ describe('source runtime state', () => {
     expect(link.seriesId).toBe('serie-legacy');
     expect(link.importedChapterIds).toContain('chapitre-legacy-1');
     expect(link.localSeriesPath).toBe('C:\\bibliotheque\\Serie Legacy');
+  });
+
+  it('indexes import history once and does not rewrite unchanged links', async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sawa-sources-'));
+    tempDirs.push(baseDir);
+    const { sourceRuntime, userDataStoreDir } = loadSourceRuntime(baseDir);
+
+    await sourceRuntime.startRuntime();
+    const connectorId = sourceRuntime.listConnectors({ ui: { allowNsfwSources: false } })[0]?.id;
+    const records = Array.from({ length: 500 }, (_, index) => ({
+      repoId: sourceRuntime.BUNDLED_REPOSITORY_ID,
+      extensionId: sourceRuntime.DEFAULT_EXTENSION_ID,
+      connectorId,
+      sourceId: 'mangadex',
+      seriesId: `series-${index}`,
+      chapterId: `chapter-${index}`,
+      destinationCategoryId: 'cat-web',
+      localPath: `C:\\bibliotheque\\Serie ${index}\\Chapitre 01`
+    }));
+    sourceRuntime.recordImportHistory(records);
+    const mangas = records.map((record, index) => ({
+      id: `manga-${index}`,
+      contentId: `content-${index}`,
+      path: path.dirname(record.localPath),
+      displayTitle: `Serie ${index}`,
+      categoryId: 'cat-web'
+    }));
+
+    const startedAt = performance.now();
+    sourceRuntime.reconcileSeriesLinksWithLibrary(mangas);
+    const durationMs = performance.now() - startedAt;
+    await sourceRuntime.flushSourcesStateWrites();
+    const statePath = path.join(userDataStoreDir, 'sources.json');
+    const firstMtime = fs.statSync(statePath).mtimeMs;
+    const firstRevision = sourceRuntime.getSourcesPersistenceStatus().revision;
+    sourceRuntime.reconcileSeriesLinksWithLibrary(mangas);
+    await sourceRuntime.flushSourcesStateWrites();
+
+    expect(durationMs).toBeLessThan(1000);
+    expect(sourceRuntime.listLinkedSeries()).toHaveLength(500);
+    expect(sourceRuntime.getSourcesPersistenceStatus().revision).toBe(firstRevision);
+    expect(fs.statSync(statePath).mtimeMs).toBe(firstMtime);
   });
 
   it('parses a Mihon index repository into installable extensions and sources', async () => {

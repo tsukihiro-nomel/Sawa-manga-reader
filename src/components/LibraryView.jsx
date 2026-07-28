@@ -3,6 +3,12 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChevronLeftIcon, ChevronRightIcon } from './Icons.jsx';
 import MangaCard from './MangaCard.jsx';
 import MediaAsset from './MediaAsset.jsx';
+import {
+  getScrollOffset,
+  makeAnchoredScrollPosition,
+  normalizeScrollPosition,
+  resolveAnchoredScrollOffset
+} from '../utils/scrollPositions.js';
 
 function makeCarouselPicks(mangas, seed) {
   const key = `${seed}:${mangas.length}`;
@@ -93,6 +99,7 @@ function LibraryView({
   mangas,
   cardSize = 'comfortable',
   initialScrollTop = 0,
+  initialScrollPosition = null,
   scrollKey,
   onScrollPositionChange,
   onOpenManga,
@@ -106,11 +113,16 @@ function LibraryView({
   onToggleSelect
 }) {
   const containerRef = useRef(null);
-  const restoredRef = useRef(false);
-  const savingBlockedRef = useRef(false);
+  const gridRef = useRef(null);
+  const restoredRef = useRef('');
+  const virtualizerRef = useRef(null);
+  // Bloquer les evenements produits par initialOffset tant que la vraie grille
+  // n'a pas mesure ses colonnes et termine son unique correction d'ancre.
+  const savingBlockedRef = useRef(true);
   const performanceMode = mangas.length >= 150;
   const minCard = cardSize === 'compact' ? 180 : cardSize === 'large' ? 320 : 240;
   const [columns, setColumns] = useState(5);
+  const [columnsMeasured, setColumnsMeasured] = useState(false);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -119,6 +131,7 @@ function LibraryView({
       entries.forEach((entry) => {
         const width = entry.contentRect.width - 48;
         setColumns(Math.max(2, Math.floor(width / minCard)));
+        setColumnsMeasured(true);
       });
     });
     observer.observe(element);
@@ -132,49 +145,51 @@ function LibraryView({
     }
     return result;
   }, [mangas, columns]);
+  const selectionOrder = useMemo(() => mangas.map((manga) => manga.id), [mangas]);
 
   const rowHeight = cardSize === 'compact' ? 460 : cardSize === 'large' ? 620 : 540;
+  const initialPosition = normalizeScrollPosition(initialScrollPosition ?? initialScrollTop);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => containerRef.current,
     estimateSize: () => rowHeight,
+    getItemKey: (index) => rows[index]?.map((manga) => manga.id || manga.contentId).join('|') || `row-${index}`,
+    initialOffset: () => getScrollOffset(initialPosition),
     overscan: performanceMode ? 0 : 1
   });
+  virtualizerRef.current = virtualizer;
 
+  const restoreToken = `${scrollKey || 'library'}:${columns}:${initialPosition.anchorId || 'offset'}:${cardSize}`;
   useLayoutEffect(() => {
     const element = containerRef.current;
-    if (!element || !initialScrollTop) return undefined;
+    if (!element || !columnsMeasured || restoredRef.current === restoreToken) return undefined;
     // La bibliotheque ne doit jamais rester decalee horizontalement.
     if (element.scrollLeft !== 0) {
       element.scrollLeft = 0;
     }
-    restoredRef.current = false;
+    restoredRef.current = restoreToken;
     savingBlockedRef.current = true;
-    virtualizer.scrollToOffset(initialScrollTop, { align: 'start' });
-
-    const apply = () => {
-      if (restoredRef.current) return;
-      virtualizer.scrollToOffset(initialScrollTop, { align: 'start' });
-      if (element.scrollHeight > initialScrollTop) element.scrollTop = initialScrollTop;
-      if (Math.abs(element.scrollTop - initialScrollTop) < 10) restoredRef.current = true;
-    };
-
-    const raf1 = requestAnimationFrame(apply);
-    const raf2 = requestAnimationFrame(() => requestAnimationFrame(apply));
-    const timers = [30, 80, 160].map((delay) => window.setTimeout(apply, delay));
+    const frame = requestAnimationFrame(() => {
+      const restoreOffset = resolveAnchoredScrollOffset({
+        position: initialPosition,
+        mangas,
+        columns,
+        rowHeight,
+        contentOffset: gridRef.current?.offsetTop || 0
+      });
+      virtualizerRef.current?.scrollToOffset(restoreOffset, { align: 'start' });
+      element.scrollTop = Math.min(restoreOffset, Math.max(0, element.scrollHeight - element.clientHeight));
+    });
     const releaseTimer = window.setTimeout(() => {
-      apply();
       savingBlockedRef.current = false;
-    }, 300);
+    }, 80);
 
     return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-      timers.forEach((timer) => window.clearTimeout(timer));
+      cancelAnimationFrame(frame);
       window.clearTimeout(releaseTimer);
       savingBlockedRef.current = false;
     };
-  }, [scrollKey, initialScrollTop, virtualizer]);
+  }, [columnsMeasured, restoreToken]);
 
   const handleScroll = useCallback(() => {
     if (savingBlockedRef.current) return;
@@ -183,14 +198,16 @@ function LibraryView({
       if (element.scrollLeft !== 0) {
         element.scrollLeft = 0;
       }
-      onScrollPositionChange?.(element.scrollTop);
+      onScrollPositionChange?.(makeAnchoredScrollPosition({
+        mangas,
+        columns,
+        rowHeight,
+        scrollTop: element.scrollTop,
+        contentOffset: gridRef.current?.offsetTop || 0,
+        layoutKey: `${cardSize}:${columns}:${rowHeight}`
+      }));
     }
-  }, [onScrollPositionChange]);
-
-  useEffect(() => () => {
-    const element = containerRef.current;
-    if (element) onScrollPositionChange?.(element.scrollTop);
-  }, [onScrollPositionChange]);
+  }, [cardSize, columns, mangas, onScrollPositionChange, rowHeight]);
 
   return (
     <section className="library-view" ref={containerRef} onScroll={handleScroll}>
@@ -204,7 +221,7 @@ function LibraryView({
           <p>Ajoute des categories, change de filtre ou verifie tes categories masquees.</p>
         </div>
       ) : (
-        <div className="manga-grid-virtual" style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+        <div ref={gridRef} className="manga-grid-virtual" style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
           {virtualizer.getVirtualItems().map((virtualRow) => (
             <div
               key={virtualRow.key}
@@ -232,6 +249,7 @@ function LibraryView({
                   selectionMode={selectionMode}
                   selected={selectedIds.has(manga.id)}
                   onToggleSelect={onToggleSelect}
+                  selectionOrder={selectionOrder}
                   performanceMode={performanceMode}
                 />
               ))}

@@ -1,6 +1,8 @@
 import { memo, useEffect, useLayoutEffect, useRef } from 'react';
 import { ChevronLeftIcon, LayersIcon, PlusIcon } from './Icons.jsx';
 import MediaAsset from './MediaAsset.jsx';
+import PreviewDisplayControls from './PreviewDisplayControls.jsx';
+import { normalizePreviewSize, resolvePreviewSize } from '../utils/previewQuality.js';
 
 function restoreScrollPosition(element, value) {
   if (!element) return () => {};
@@ -54,7 +56,7 @@ function middleMouseDown(event) {
   event.preventDefault();
 }
 
-function middleMouseUp(event, callback) {
+function middleAuxClick(event, callback) {
   if (event.button !== 1) return;
   event.preventDefault();
   event.stopPropagation();
@@ -71,10 +73,15 @@ function ChapterPreviewView({
   onReadFromNewTab,
   onReadFromBackgroundTab,
   onOpenSourceSeries,
+  pagePreviewSize = 'comfortable',
+  previewQuality = 'balanced',
+  onPreviewSettingsChange,
   onContextMenu
 }) {
   const containerRef = useRef(null);
   const isLoadingPages = !Array.isArray(chapter.pages);
+  const normalizedPagePreviewSize = normalizePreviewSize(pagePreviewSize);
+  const pagePreviewDimensions = resolvePreviewSize('page', normalizedPagePreviewSize);
 
   useEffect(() => () => {
     if (containerRef.current) onScrollPositionChange?.(containerRef.current.scrollTop);
@@ -119,31 +126,45 @@ function ChapterPreviewView({
           <p>Les pages sont chargées à la demande pour garder l’application rapide.</p>
         </div>
       ) : (
-        <div className="page-preview-grid">
-          {chapter.pages.map((page) => (
-            <button
-              key={page.id}
-              className="page-thumb"
-              onClick={() => onReadFrom(page.index)}
-              onMouseDown={middleMouseDown}
-              onMouseUp={(event) => middleMouseUp(event, () => onReadFromBackgroundTab(page.index))}
-              onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter, pageIndex: page.index })}
-            >
-              <MediaAsset
-                src={page.src}
-                alt={`Page ${page.index + 1}`}
-                loading="lazy"
-                className="thumb-smooth thumb-media"
-                mediaType={page.sourceType || 'image'}
-                filePath={page.path}
-                pageNumber={page.pdfPageNumber || page.index + 1}
-                maxWidth={240}
-                maxHeight={360}
-              />
-              <span>Page {page.index + 1}</span>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="preview-controls-row">
+            <PreviewDisplayControls
+              compact
+              kind="page"
+              size={normalizedPagePreviewSize}
+              quality={previewQuality}
+              onSizeChange={(value) => onPreviewSettingsChange?.({ pagePreviewSize: value })}
+              onQualityChange={(value) => onPreviewSettingsChange?.({ previewQuality: value })}
+            />
+          </div>
+          <div className="page-preview-grid" data-preview-size={normalizedPagePreviewSize}>
+            {chapter.pages.map((page) => (
+              <button
+                key={page.id}
+                className="page-thumb"
+                onClick={() => onReadFrom(page.index)}
+                onMouseDown={middleMouseDown}
+                onAuxClick={(event) => middleAuxClick(event, () => onReadFromBackgroundTab(page.index))}
+                onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter, pageIndex: page.index })}
+              >
+                <MediaAsset
+                  src={page.src}
+                  alt={`Page ${page.index + 1}`}
+                  loading="lazy"
+                  className="thumb-smooth thumb-media"
+                  mediaType={page.sourceType || 'image'}
+                  filePath={page.path}
+                  pageNumber={page.pdfPageNumber || page.index + 1}
+                  maxWidth={pagePreviewDimensions.width}
+                  maxHeight={pagePreviewDimensions.height}
+                  thumbnail
+                  previewQuality={previewQuality}
+                />
+                <span>Page {page.index + 1}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </section>
   );

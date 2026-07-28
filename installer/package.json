@@ -1,6 +1,6 @@
 {
   "name": "sawa-installer",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "main": "main/main.cjs",
   "productName": "Sawa Installer",
   "description": "Sawa Manga Library — Setup",

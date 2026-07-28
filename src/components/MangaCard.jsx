@@ -13,6 +13,7 @@ const MangaCard = memo(function MangaCard({
   selectionMode = false,
   selected = false,
   onToggleSelect,
+  selectionOrder = [],
   privateBlur = false,
   performanceMode = false
 }) {
@@ -20,15 +21,15 @@ const MangaCard = memo(function MangaCard({
   const pendingPointerRef = useRef(null);
   const pointerRafRef = useRef(null);
 
-  const handleClick = useCallback(() => {
-    if (selectionMode) {
-      onToggleSelect?.(manga.id);
+  const handleClick = useCallback((event) => {
+    if (selectionMode || event.ctrlKey || event.metaKey || event.shiftKey) {
+      onToggleSelect?.(manga.id, { event, orderedIds: selectionOrder });
       return;
     }
     onOpen?.(manga.id);
-  }, [selectionMode, onToggleSelect, manga.id, onOpen]);
+  }, [selectionMode, onToggleSelect, manga.id, onOpen, selectionOrder]);
 
-  const handleMiddleUp = useCallback((event) => {
+  const handleAuxClick = useCallback((event) => {
     if (selectionMode || event.button !== 1) return;
     event.preventDefault();
     event.stopPropagation();
@@ -46,8 +47,8 @@ const MangaCard = memo(function MangaCard({
 
   const handleSelectButton = useCallback((event) => {
     event.stopPropagation();
-    onToggleSelect?.(manga.id);
-  }, [manga.id, onToggleSelect]);
+    onToggleSelect?.(manga.id, { event, orderedIds: selectionOrder });
+  }, [manga.id, onToggleSelect, selectionOrder]);
 
   const handleContext = useCallback((event) => onContextMenu?.(event, { type: 'manga', manga }), [manga, onContextMenu]);
   const handleOpenSourceSeries = useCallback((event) => {
@@ -125,7 +126,8 @@ const MangaCard = memo(function MangaCard({
       ].filter(Boolean).join(' ')}
       onClick={handleClick}
       onMouseDown={handleMiddleDown}
-      onMouseUp={handleMiddleUp}
+      onAuxClick={handleAuxClick}
+      data-manga-id={manga.id}
       onContextMenu={handleContext}
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
@@ -180,6 +182,9 @@ const MangaCard = memo(function MangaCard({
             ) : null}
             {manga.hasNewChapters ? <span className="mc-badge mc-badge-new">Nouveau</span> : null}
             {manga.sourceWeb?.linked ? <span className="mc-badge mc-badge-source"><LayersIcon size={11} /> Source web</span> : null}
+            {manga.workGroup?.editionCount > 1 ? (
+              <span className="mc-badge mc-badge-editions"><LayersIcon size={11} /> {manga.workGroup.editionCount} éditions</span>
+            ) : null}
             {manga.isPrivate ? <span className="mc-badge mc-badge-private"><ArchiveIcon size={11} /> Prive</span> : null}
           </div>
 

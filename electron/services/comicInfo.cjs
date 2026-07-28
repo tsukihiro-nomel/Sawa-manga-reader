@@ -27,6 +27,22 @@ function uniqueList(values = []) {
   return [...unique.values()];
 }
 
+function buildComicInfoExportRecord(manga = {}, chapter = null) {
+  const tags = uniqueList((manga.tags || []).map((tag) => tag?.name || tag?.id || tag || ''));
+  const chapterNumber = chapter?.number ?? chapter?.chapterNumber ?? chapter?.index ?? manga.number ?? '';
+  return {
+    series: manga.displayTitle || manga.name || '',
+    title: chapter?.displayTitle || chapter?.name || chapter?.title || manga.displayTitle || manga.name || '',
+    number: chapterNumber,
+    volume: chapter?.volume ?? manga.volume ?? '',
+    year: manga.year || '',
+    writer: manga.author || '',
+    artist: '',
+    summary: manga.description || '',
+    genre: tags
+  };
+}
+
 function buildComicInfoXml(record = {}) {
   const fields = [
     ['Series', normalizeString(record.series || record.title)],
@@ -74,6 +90,7 @@ function writeComicInfoSidecar(targetPath, record = {}) {
 }
 
 module.exports = {
+  buildComicInfoExportRecord,
   buildComicInfoXml,
   writeComicInfoSidecar
 };

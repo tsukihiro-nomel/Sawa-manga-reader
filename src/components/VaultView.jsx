@@ -99,6 +99,7 @@ function VaultView({
   cardSize = 'comfortable',
   activeCategoryId = null,
   initialScrollTop = 0,
+  initialScrollPosition = null,
   scrollKey,
   selectionMode,
   selectedIds,
@@ -250,6 +251,7 @@ function VaultView({
           cardSize={cardSize}
           header={vaultHeader}
           initialScrollTop={initialScrollTop}
+          initialScrollPosition={initialScrollPosition}
           scrollKey={scrollKey}
           onScrollPositionChange={onScrollPositionChange}
           onOpen={onOpenManga}

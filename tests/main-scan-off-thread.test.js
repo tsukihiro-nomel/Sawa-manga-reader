@@ -83,4 +83,23 @@ describe('Electron scan jobs', () => {
       allMangas: [{ displayTitle: 'Manga', pageCount: 1 }]
     });
   });
+
+  it('returns only an unchanged marker when a reusable scan index still matches', async () => {
+    const workerModule = require('../electron/services/libraryScanWorker.cjs');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sawa-worker-scan-'));
+    tempDirs.push(root);
+    const mangaPath = path.join(root, 'Manga');
+    fs.mkdirSync(mangaPath, { recursive: true });
+    fs.writeFileSync(path.join(mangaPath, '001.jpg'), 'page');
+    const persistedState = {
+      categories: [{ id: 'library', name: 'Library', path: root, hidden: false }]
+    };
+    const first = await workerModule.scanLibraryInWorker(persistedState);
+    const second = await workerModule.scanLibraryInWorker({
+      ...persistedState,
+      scanIndex: first.scanIndex
+    }, { skipUnchanged: true });
+
+    expect(second).toEqual({ unchanged: true });
+  });
 });

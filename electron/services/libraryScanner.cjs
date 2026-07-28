@@ -128,7 +128,11 @@ const SCAN_ENTRY_COMPARISON_FIELDS = [
 ];
 
 function scanEntryKey(entry = {}) {
-  return String(entry.locationId || entry.path || entry.legacyId || entry.contentId || '').trim();
+  const identity = entry.locationId || entry.path || entry.legacyId || entry.contentId || '';
+  // A one-shot folder legitimately produces a manga entry and a chapter entry
+  // with the same location. Include the record type so the comparison index
+  // does not treat that pair as a duplicate and force a false-positive rescan.
+  return identity ? `${String(entry.type || 'entry')}:${String(identity).trim()}` : '';
 }
 
 function areScanEntriesEquivalent(left, right) {
@@ -362,11 +366,12 @@ function resolveCollectionIdsForManga(mangaId, persistedState) {
 }
 
 function resolveCover(metadata, firstChapter = null) {
-  if (metadata.coverPath && fs.existsSync(metadata.coverPath)) {
+  const automaticOnly = metadata.coverMode === 'auto';
+  if (!automaticOnly && metadata.coverPath && fs.existsSync(metadata.coverPath)) {
     return { coverSrc: toFileSrc(metadata.coverPath), coverType: 'custom', coverMediaType: 'image', coverFilePath: metadata.coverPath, coverPageNumber: 1 };
   }
 
-  if (metadata.onlineCoverPath && fs.existsSync(metadata.onlineCoverPath)) {
+  if (!automaticOnly && metadata.onlineCoverPath && fs.existsSync(metadata.onlineCoverPath)) {
     return { coverSrc: toFileSrc(metadata.onlineCoverPath), coverType: 'online', coverMediaType: 'image', coverFilePath: metadata.onlineCoverPath, coverPageNumber: 1 };
   }
 
@@ -652,6 +657,7 @@ function scanManga(mangaPath, persistedState, previousScan) {
     coverMediaType,
     coverFilePath,
     coverPageNumber,
+    coverProfile: persistedState.coverProfiles?.[legacyMangaId] || null,
     isFavorite,
     isRead,
     readingState,
