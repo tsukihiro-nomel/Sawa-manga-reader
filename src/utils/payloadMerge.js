@@ -12,13 +12,32 @@ function indexEntities(entities = []) {
   return index;
 }
 
-function sameEntity(left, right) {
-  if (left === right) return true;
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch (_error) {
-    return false;
+function samePayloadValue(left, right) {
+  if (Object.is(left, right)) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+
+  const leftIsArray = Array.isArray(left);
+  if (leftIsArray !== Array.isArray(right)) return false;
+  if (leftIsArray) {
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index += 1) {
+      if (!samePayloadValue(left[index], right[index])) return false;
+    }
+    return true;
   }
+
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+    if (!samePayloadValue(left[key], right[key])) return false;
+  }
+  return true;
+}
+
+function sameEntity(left, right) {
+  return samePayloadValue(left, right);
 }
 
 function reuseUnchangedEntities(previousEntities = [], nextEntities = []) {

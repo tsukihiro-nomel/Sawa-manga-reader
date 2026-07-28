@@ -6,12 +6,16 @@ import {
   Clock3,
   Edit3,
   Heart,
+  Image,
   MoreHorizontal,
   Play,
   Plus,
   Tag
 } from 'lucide-react';
 import MediaAsset from '../../components/MediaAsset.jsx';
+import PreviewDisplayControls from '../../components/PreviewDisplayControls.jsx';
+import { paginateItems } from '../../utils/paginateItems.js';
+import { normalizePreviewSize, resolvePreviewSize } from '../../utils/previewQuality.js';
 import { resolveTabOpenIntent } from './tabInteractions.js';
 
 function formatDuration(pageCount) {
@@ -29,7 +33,16 @@ function chapterProgress(chapter) {
   return count > 1 ? Math.round((index / (count - 1)) * 100) : 0;
 }
 
-function ChapterTile({ manga, chapter, index, onOpen, onOpenInNewTab, onContextMenu }) {
+function ChapterTile({
+  manga,
+  chapter,
+  index,
+  previewDimensions,
+  previewQuality,
+  onOpen,
+  onOpenInNewTab,
+  onContextMenu
+}) {
   const pages = chapter.pages || [];
   const preview = pages[0];
   const progress = chapterProgress(chapter);
@@ -46,7 +59,7 @@ function ChapterTile({ manga, chapter, index, onOpen, onOpenInNewTab, onContextM
       onMouseDown={(event) => {
         if (event.button === 1) event.preventDefault();
       }}
-      onMouseUp={(event) => {
+      onAuxClick={(event) => {
         if (event.button !== 1) return;
         event.preventDefault();
         event.stopPropagation();
@@ -63,8 +76,10 @@ function ChapterTile({ manga, chapter, index, onOpen, onOpenInNewTab, onContextM
             mediaType={preview.sourceType || 'image'}
             filePath={preview.path}
             pageNumber={preview.pdfPageNumber || 1}
-            maxWidth={320}
-            maxHeight={220}
+            maxWidth={previewDimensions.width}
+            maxHeight={previewDimensions.height}
+            thumbnail
+            previewQuality={previewQuality}
           />
         ) : manga.coverSrc ? (
           <MediaAsset src={manga.coverSrc} alt={title} className="kv-chapter-thumb-image" />
@@ -103,12 +118,26 @@ function KavitaSeriesView({
   onOpenChapterInNewTab,
   onToggleFavorite,
   onEditMetadata,
+  onManageCover,
   onManageTags,
   onAddToCollection,
+  onSelectEdition,
+  onSetPreferredEdition,
+  onUngroupEditions,
+  chapterCardSize = 'comfortable',
+  previewQuality = 'balanced',
+  onPreviewSettingsChange,
   onContextMenu
 }) {
   const [tab, setTab] = useState('storyline');
+  const [chapterPage, setChapterPage] = useState(0);
+  const normalizedChapterCardSize = normalizePreviewSize(chapterCardSize);
+  const chapterPreviewDimensions = resolvePreviewSize('chapter', normalizedChapterCardSize);
   const chapters = manga.chapters || [];
+  const chapterPagination = useMemo(
+    () => paginateItems(chapters, chapterPage, 60),
+    [chapterPage, chapters]
+  );
   const pageCount = useMemo(
     () => chapters.reduce((total, chapter) => total + Number(chapter.pageCount || chapter.pages?.length || 0), 0),
     [chapters]
@@ -159,12 +188,27 @@ function KavitaSeriesView({
             <span><Clock3 size={15} /> {formatDuration(pageCount)}</span>
             <span>{chapters.length} chapitre(s)</span>
           </div>
+          {manga.workGroup?.editionCount > 1 ? (
+            <div className="kv-editions-row">
+              <strong>{manga.workGroup.editionCount} éditions</strong>
+              <select value={manga.id} onChange={(event) => onSelectEdition?.(event.target.value)}>
+                {manga.workGroup.editions.map((edition) => (
+                  <option key={edition.id} value={edition.id}>{edition.title || edition.path || edition.id}</option>
+                ))}
+              </select>
+              {manga.workGroup.preferredEditionId !== manga.id ? (
+                <button type="button" onClick={() => onSetPreferredEdition?.(manga.workGroup.id, manga.id)}>Préférer</button>
+              ) : <span>Préférée</span>}
+              <button type="button" onClick={() => onUngroupEditions?.(manga.workGroup.id)}>Dégrouper</button>
+            </div>
+          ) : null}
           <div className="kv-series-actions">
             <button type="button" className="kv-primary-action" onClick={onResume}><Play size={17} /> {manga.progressPercent > 0 ? 'Continuer' : 'Lire'}</button>
             <button type="button" className={`kv-action-icon ${manga.isFavorite ? 'is-active' : ''}`} onClick={() => onToggleFavorite?.(manga.id)} title="Favori">
               <Heart size={18} fill={manga.isFavorite ? 'currentColor' : 'none'} />
             </button>
             <button type="button" className="kv-action-icon" onClick={onEditMetadata} title="Modifier"><Edit3 size={18} /></button>
+            <button type="button" className="kv-action-icon" onClick={() => onManageCover?.(manga.id)} title="Gérer la couverture"><Image size={18} /></button>
             <button type="button" className="kv-action-icon" onClick={onManageTags} title="Tags"><Tag size={18} /></button>
             <button type="button" className="kv-action-icon" onClick={onAddToCollection} title="Ajouter a une collection"><Plus size={18} /></button>
             <button type="button" className="kv-action-icon" onClick={(event) => onContextMenu?.(event, { type: 'manga', manga })} title="Plus"><MoreHorizontal size={18} /></button>
@@ -213,19 +257,40 @@ function KavitaSeriesView({
 
       <div className="kv-detail-content">
         {tab === 'storyline' || tab === 'chapters' ? (
-          <div className="kv-chapter-grid">
-            {chapters.map((chapter, index) => (
-              <ChapterTile
-                key={chapter.id}
-                manga={manga}
-                chapter={chapter}
-                index={index}
-                onOpen={onOpenChapter}
-                onOpenInNewTab={onOpenChapterInNewTab}
-                onContextMenu={onContextMenu}
+          <>
+            <div className="kv-preview-controls-row">
+              <PreviewDisplayControls
+                compact
+                kind="chapter"
+                size={normalizedChapterCardSize}
+                quality={previewQuality}
+                onSizeChange={(value) => onPreviewSettingsChange?.({ chapterCardSize: value })}
+                onQualityChange={(value) => onPreviewSettingsChange?.({ previewQuality: value })}
               />
-            ))}
-          </div>
+            </div>
+            <div className="kv-chapter-grid" data-preview-size={normalizedChapterCardSize}>
+              {chapterPagination.items.map((chapter, index) => (
+                <ChapterTile
+                  key={chapter.id}
+                  manga={manga}
+                  chapter={chapter}
+                  index={chapterPagination.start + index}
+                  previewDimensions={chapterPreviewDimensions}
+                  previewQuality={previewQuality}
+                  onOpen={onOpenChapter}
+                  onOpenInNewTab={onOpenChapterInNewTab}
+                  onContextMenu={onContextMenu}
+                />
+              ))}
+            {chapterPagination.totalPages > 1 ? (
+              <div className="kv-chapter-pagination" aria-label="Pagination des chapitres">
+                <button type="button" disabled={chapterPagination.page === 0} onClick={() => setChapterPage((page) => Math.max(0, page - 1))}>Precedents</button>
+                <span>{chapterPagination.start + 1}-{chapterPagination.end} sur {chapters.length}</span>
+                <button type="button" disabled={chapterPagination.page >= chapterPagination.totalPages - 1} onClick={() => setChapterPage((page) => Math.min(chapterPagination.totalPages - 1, page + 1))}>Suivants</button>
+              </div>
+            ) : null}
+            </div>
+          </>
         ) : null}
         {tab === 'specials' ? <div className="kv-flat-message">Les chapitres speciaux apparaitront ici lorsqu ils seront detectes.</div> : null}
         {tab === 'activity' ? <div className="kv-flat-message">Progression actuelle: {manga.progressPercent || 0}%.</div> : null}

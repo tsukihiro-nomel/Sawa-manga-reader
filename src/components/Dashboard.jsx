@@ -15,26 +15,9 @@ import {
   TrendingUpIcon,
   SearchIcon
 } from './Icons.jsx';
+import { buildDashboardSelectionModel } from '../utils/selectionVisibility.js';
 
-const DEFAULT_BLOCK_ORDER = [
-  'hero',
-  'stats',
-  'quick-actions',
-  'continue-reading',
-  'recently-resumed',
-  'recently-added',
-  'new-chapters',
-  'favorites',
-  'completed'
-];
-
-function buildDashboardOrder(savedOrder = []) {
-  const known = new Set(DEFAULT_BLOCK_ORDER);
-  const normalized = Array.isArray(savedOrder) ? savedOrder.filter((id) => known.has(id)) : [];
-  return [...normalized, ...DEFAULT_BLOCK_ORDER.filter((id) => !normalized.includes(id))];
-}
-
-function DashSection({ title, icon, mangas, onOpen, onToggleFavorite, onContextMenu, emptyText, selectionMode, selectedIds, onToggleSelect }) {
+function DashSection({ title, icon, mangas, onOpen, onToggleFavorite, onContextMenu, emptyText, selectionMode, selectedIds, onToggleSelect, selectionOrder }) {
   if (!mangas || mangas.length === 0) {
     return emptyText ? (
       <div className="empty-card dash-empty-card">
@@ -50,7 +33,7 @@ function DashSection({ title, icon, mangas, onOpen, onToggleFavorite, onContextM
         <h3>{icon} {title}</h3>
       </div>
       <div className="dash-section-grid">
-        {mangas.slice(0, 12).map((manga) => (
+        {mangas.map((manga) => (
           <MangaCard
             key={manga.id}
             manga={manga}
@@ -61,6 +44,7 @@ function DashSection({ title, icon, mangas, onOpen, onToggleFavorite, onContextM
             selectionMode={selectionMode}
             selected={selectedIds.has(manga.id)}
             onToggleSelect={onToggleSelect}
+            selectionOrder={selectionOrder}
           />
         ))}
       </div>
@@ -134,6 +118,7 @@ function Dashboard({
   maintenanceCount = 0,
   selectionMode = false,
   selectedMangaIds = new Set(),
+  selectionOrder = [],
   onToggleSelect,
   onSelectionModeChange
 }) {
@@ -141,29 +126,21 @@ function Dashboard({
   const [draggedBlockId, setDraggedBlockId] = useState(null);
   const collectionsCount = Object.keys(persisted?.collections ?? {}).length;
 
-  const continueReading = useMemo(() => [...allMangas].filter((manga) => Number(manga?.progressPercent ?? 0) > 0 && !manga?.isRead).sort((a, b) => new Date(b?.lastReadAt || 0).getTime() - new Date(a?.lastReadAt || 0).getTime()), [allMangas]);
-  const recentlyAdded = useMemo(() => [...allMangas].filter((manga) => manga?.addedAt).sort((a, b) => new Date(b?.addedAt || 0).getTime() - new Date(a?.addedAt || 0).getTime()).slice(0, 12), [allMangas]);
-  const newChapters = useMemo(() => allMangas.filter((manga) => manga?.hasNewChapters), [allMangas]);
-  const completed = useMemo(() => allMangas.filter((manga) => manga?.isRead), [allMangas]);
+  const dashboardModel = useMemo(
+    () => buildDashboardSelectionModel({ allMangas, favorites, persisted, ui }),
+    [allMangas, favorites, persisted, ui]
+  );
+  const continueReading = dashboardModel.sectionMangas['continue-reading'];
+  const recentlyAdded = dashboardModel.sectionMangas['recently-added'];
+  const newChapters = dashboardModel.sectionMangas['new-chapters'];
+  const completed = dashboardModel.sectionMangas.completed;
   const unread = useMemo(() => allMangas.filter((manga) => !manga?.lastReadAt && !manga?.isRead), [allMangas]);
   const inProgress = useMemo(() => allMangas.filter((manga) => Number(manga?.progressPercent ?? 0) > 0 && !manga?.isRead), [allMangas]);
 
-  const recentResumes = useMemo(() => {
-    const recents = Array.isArray(persisted?.recents) ? persisted.recents : [];
-    const byManga = new Map();
-    for (const entry of recents) {
-      if (!entry?.mangaId || byManga.has(entry.mangaId)) continue;
-      const manga = allMangas.find((item) => item.id === entry.mangaId);
-      if (!manga) continue;
-      byManga.set(entry.mangaId, { ...manga, resumeChapterId: entry.chapterId, resumePageIndex: entry.pageIndex ?? 0 });
-    }
-    return [...byManga.values()].slice(0, 12);
-  }, [allMangas, persisted?.recents]);
-
-  const orderedBlocks = useMemo(() => buildDashboardOrder(ui?.dashboardLayout), [ui?.dashboardLayout]);
-  const hiddenBlocks = ui?.dashboardHiddenSections ?? {};
-  const visibleBlockIds = orderedBlocks.filter((blockId) => !hiddenBlocks?.[blockId]);
-  const hiddenBlockIds = orderedBlocks.filter((blockId) => hiddenBlocks?.[blockId]);
+  const recentResumes = dashboardModel.sectionMangas['recently-resumed'];
+  const orderedBlocks = dashboardModel.orderedBlocks;
+  const visibleBlockIds = dashboardModel.visibleBlocks;
+  const hiddenBlockIds = dashboardModel.hiddenBlocks;
 
   const totalMangas = allMangas.length;
   const totalFavorites = favorites.length;
@@ -244,17 +221,17 @@ function Dashboard({
           </div>
         );
       case 'continue-reading':
-        return <DashSection title="Continuer la lecture" icon={<PlayIcon size={18} />} mangas={continueReading} onOpen={onResumeManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Aucune reprise en cours pour le moment." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} />;
+        return <DashSection title="Continuer la lecture" icon={<PlayIcon size={18} />} mangas={continueReading} onOpen={onResumeManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Aucune reprise en cours pour le moment." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} selectionOrder={selectionOrder} />;
       case 'recently-resumed':
-        return <DashSection title="Repris recemment" icon={<ClockIcon size={18} />} mangas={recentResumes} onOpen={onResumeManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Tes reprises recentes apparaitront ici." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} />;
+        return <DashSection title="Repris recemment" icon={<ClockIcon size={18} />} mangas={recentResumes} onOpen={onResumeManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Tes reprises recentes apparaitront ici." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} selectionOrder={selectionOrder} />;
       case 'recently-added':
-        return <DashSection title="Ajoutes recemment" icon={<PlusIcon size={18} />} mangas={recentlyAdded} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Aucun ajout recent pour le moment." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} />;
+        return <DashSection title="Ajoutes recemment" icon={<PlusIcon size={18} />} mangas={recentlyAdded} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Aucun ajout recent pour le moment." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} selectionOrder={selectionOrder} />;
       case 'new-chapters':
-        return newChapters.length > 0 ? <DashSection title="Nouveaux chapitres" icon={<SparklesIcon size={18} />} mangas={newChapters} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} /> : null;
+        return newChapters.length > 0 ? <DashSection title="Nouveaux chapitres" icon={<SparklesIcon size={18} />} mangas={newChapters} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} selectionOrder={selectionOrder} /> : null;
       case 'favorites':
-        return <DashSection title="Favoris" icon={<HeartIcon size={18} filled />} mangas={favorites} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Ajoute des mangas en favoris pour les retrouver ici." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} />;
+        return <DashSection title="Favoris" icon={<HeartIcon size={18} filled />} mangas={favorites} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} emptyText="Ajoute des mangas en favoris pour les retrouver ici." selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} selectionOrder={selectionOrder} />;
       case 'completed':
-        return completed.length > 0 ? <DashSection title="Termines" icon={<BookIcon size={18} />} mangas={completed} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} /> : null;
+        return completed.length > 0 ? <DashSection title="Termines" icon={<BookIcon size={18} />} mangas={completed} onOpen={onOpenManga} onToggleFavorite={onToggleFavorite} onContextMenu={onContextMenu} selectionMode={selectionMode} selectedIds={selectedMangaIds} onToggleSelect={onToggleSelect} selectionOrder={selectionOrder} /> : null;
       default:
         return null;
     }

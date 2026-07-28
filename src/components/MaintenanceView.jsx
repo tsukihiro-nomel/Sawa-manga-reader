@@ -10,7 +10,8 @@ import {
   SparklesIcon,
   TrashIcon,
   TrendingUpIcon,
-  ArchiveIcon
+  ArchiveIcon,
+  LayersIcon
 } from './Icons.jsx';
 
 function formatBytes(value = 0) {
@@ -115,6 +116,26 @@ function VisualCandidateRow({ candidate, onOpenManga }) {
   );
 }
 
+function IdentitySuggestionRow({ suggestion, onOpenManga, onDecide }) {
+  const isEdition = suggestion.kind === 'edition';
+  return (
+    <div className="maintenance-duplicate-row">
+      <div>
+        <strong>{isEdition ? 'Éditions alternatives possibles' : 'Dossier déplacé probable'}</strong>
+        <span>
+          {Math.round(Number(suggestion.score || 0) * 100)}% · {(suggestion.reasons || []).join(' · ')}
+        </span>
+        <small>{suggestion.fromPath || suggestion.fromMangaId} → {suggestion.toPath || suggestion.toMangaId}</small>
+      </div>
+      <div className="maintenance-duplicate-actions">
+        <button type="button" className="ghost-button" onClick={() => onOpenManga(suggestion.toMangaId)}>Vérifier</button>
+        <button type="button" className="ghost-button" onClick={() => onDecide(suggestion.id, 'reject')}>Refuser</button>
+        <button type="button" className="primary-button" onClick={() => onDecide(suggestion.id, 'accept')}>Confirmer</button>
+      </div>
+    </div>
+  );
+}
+
 function IssueSection({ title, description, icon, count, children, action }) {
   return (
     <section className="maintenance-section-card">
@@ -140,6 +161,8 @@ function MaintenanceView({
   migrationBusy = false,
   migrationFeedback = '',
   duplicateCandidates,
+  identitySuggestions = [],
+  identityBusy = false,
   showOcrSection = false,
   showVisualDedupeSection = false,
   workbenchCount,
@@ -149,12 +172,15 @@ function MaintenanceView({
   onOpenManga,
   onScrollPositionChange,
   onForceRescan,
+  onRetrySync,
   onRunDeepScan,
   onRebuildDerivedData,
   onAnalyzeMigration,
   onRunMigration,
   onCleanupLegacyStorage,
   onRefreshDuplicateCandidates,
+  onAnalyzeIdentities,
+  onDecideIdentitySuggestion,
   onEnqueueOcr,
   onPauseOcr,
   onResumeOcr,
@@ -246,7 +272,38 @@ function MaintenanceView({
           />
         ) : null}
         <SummaryTile icon={<TrendingUpIcon size={18} />} label="Memoire app" value={formatBytes(stats?.memoryUsage?.heapUsed)} hint={stats?.lastScanTime ? 'scan recent memorise' : 'pas de scan memorise'} />
+        {stats?.diagnostics?.enabled ? (
+          <SummaryTile
+            icon={<TrendingUpIcon size={18} />}
+            label="Latence UI"
+            value={`${stats?.diagnostics?.eventLoop?.p95Ms || 0} ms`}
+            hint={`${stats?.diagnostics?.measurements?.length || 0}/200 mesures locales`}
+          />
+        ) : null}
       </div>
+
+      <IssueSection
+        title="Déplacements et éditions"
+        description="Les correspondances exactes sont restaurées automatiquement. Les rapprochements probables attendent toujours ta confirmation."
+        icon={<LayersIcon size={16} />}
+        count={identitySuggestions.length}
+        action={(
+          <button type="button" className="ghost-button" disabled={identityBusy} onClick={onAnalyzeIdentities}>
+            <RefreshIcon size={14} /> {identityBusy ? 'Analyse…' : 'Analyser'}
+          </button>
+        )}
+      >
+        {identitySuggestions.length === 0 ? (
+          <p className="maintenance-empty">Aucun déplacement ou regroupement à confirmer.</p>
+        ) : identitySuggestions.slice(0, 20).map((suggestion) => (
+          <IdentitySuggestionRow
+            key={suggestion.id}
+            suggestion={suggestion}
+            onOpenManga={onOpenManga}
+            onDecide={onDecideIdentitySuggestion}
+          />
+        ))}
+      </IssueSection>
 
       <IssueSection
         title="Etat de synchro"
@@ -254,9 +311,16 @@ function MaintenanceView({
         icon={<RefreshIcon size={16} />}
         count={(syncStatus?.queuedCount || 0) + (syncStatus?.runningCount || 0)}
         action={(
-          <button type="button" className="ghost-button" onClick={onRebuildDerivedData}>
-            <DatabaseIcon size={14} /> Reconstruire les donnees derivees
-          </button>
+          <div className="maintenance-inline-actions">
+            {(syncStatus?.state === 'retry-required' || syncStatus?.retryable) ? (
+              <button type="button" className="primary-button" onClick={onRetrySync}>
+                <RefreshIcon size={14} /> Relancer
+              </button>
+            ) : null}
+            <button type="button" className="ghost-button" onClick={onRebuildDerivedData}>
+              <DatabaseIcon size={14} /> Reconstruire les donnees derivees
+            </button>
+          </div>
         )}
       >
         <p className="maintenance-empty">

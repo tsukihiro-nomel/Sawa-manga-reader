@@ -1,5 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createInterfaceTransitionCoordinator } from '../src/interfaces/interfaceTransition.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createInterfaceTransitionCoordinator,
+  waitForStableLayout,
+  waitForTransitionPaint
+} from '../src/interfaces/interfaceTransition.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('interface transition coordinator', () => {
   it('flushes, closes transient UI, preloads and persists before applying Kavita', async () => {
@@ -11,12 +20,13 @@ describe('interface transition coordinator', () => {
       persistMode: async () => calls.push('persist'),
       applyMode: () => calls.push('apply'),
       setTransition: (active) => calls.push(active ? 'veil-on' : 'veil-off'),
+      waitForTransitionPaint: async () => calls.push('veil-painted'),
       waitForStableLayout: async () => calls.push('layout')
     });
 
     await coordinator.request('kavita', 'sawa');
 
-    expect(calls).toEqual(['veil-on', 'flush', 'close', 'preload', 'persist', 'apply', 'layout', 'veil-off']);
+    expect(calls).toEqual(['veil-on', 'veil-painted', 'flush', 'close', 'preload', 'persist', 'apply', 'layout', 'veil-off']);
   });
 
   it('keeps the current shell and reports a local error when persistence fails', async () => {
@@ -38,5 +48,20 @@ describe('interface transition coordinator', () => {
     await expect(coordinator.request('kavita', 'sawa')).resolves.toBe(false);
     expect(applyMode).not.toHaveBeenCalled();
     expect(reportError).toHaveBeenCalledWith('disk unavailable');
+  });
+
+  it('finishes paint waits when Chromium suspends animation frames', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    let paintSettled = false;
+    let layoutSettled = false;
+
+    void waitForTransitionPaint().then(() => { paintSettled = true; });
+    void waitForStableLayout().then(() => { layoutSettled = true; });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(paintSettled).toBe(true);
+    expect(layoutSettled).toBe(true);
   });
 });

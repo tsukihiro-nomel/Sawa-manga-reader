@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef } from 'react';
 import MediaAsset from '../../components/MediaAsset.jsx';
 import { measureVisibleWebtoonPage } from './webtoonMeasurement.js';
 
-function PageAsset({ page, index, className = '', style }) {
+function PageAsset({ page, index, className = '', style, lazy = false }) {
   if (!page) return <div className={`kv-reader-missing-page ${className}`}>Page indisponible</div>;
   return (
     <MediaAsset
@@ -15,7 +15,8 @@ function PageAsset({ page, index, className = '', style }) {
       pageNumber={page.pdfPageNumber || index + 1}
       maxWidth={2000}
       maxHeight={2600}
-      lazy={false}
+      loading={lazy ? 'lazy' : 'eager'}
+      lazy={lazy}
     />
   );
 }
@@ -79,7 +80,7 @@ export const WebtoonRenderer = memo(function WebtoonRenderer({ pages, fitMode, i
     <div ref={rootRef} className={`kv-reader-webtoon is-${fitMode}`} onScroll={onScroll}>
       {pages.map((page, index) => (
         <div key={page.id || index} data-kv-page-index={index}>
-          <PageAsset page={page} index={index} className="kv-reader-page" style={imageStyle} />
+          <PageAsset page={page} index={index} className="kv-reader-page" style={imageStyle} lazy />
         </div>
       ))}
     </div>

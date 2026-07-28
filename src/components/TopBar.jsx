@@ -3,19 +3,26 @@ import {
   CheckIcon,
   FolderPlusIcon,
   KeyboardIcon,
-  LayersIcon,
   PanelCollapseIcon,
   PanelExpandIcon,
-  SearchIcon,
   SettingsIcon,
   SparklesIcon
 } from './Icons.jsx';
+import SearchExperience from './SearchExperience.jsx';
 
 function TopBar({
   sidebarCollapsed,
   onToggleSidebar,
   search,
   onSearchChange,
+  searchState,
+  onSearchStateChange,
+  searchSuggestions = [],
+  searchResultCount = 0,
+  searchFilterOptions = {},
+  onCommitSearch,
+  onClearSearchRecents,
+  onRemoveAdvancedSearchToken,
   sort,
   onSortChange,
   selectedCategory,
@@ -64,44 +71,32 @@ function TopBar({
       </div>
 
       <div className="topbar-right">
-        <div className={`search-box ${searchChips.length ? 'search-box-advanced' : ''}`}>
-          <div className="search-box-input-row">
-            <SearchIcon size={16} />
-            <input
-              placeholder='Recherche libre ou syntaxe: tag:romance status:unread'
-              value={search}
-              onChange={(event) => onSearchChange(event.target.value)}
-            />
-            <button type="button" className={`search-help-button ${searchHelpOpen ? 'active' : ''}`} onClick={onToggleSearchHelp} title="Aide recherche avancee">
-              ?
-            </button>
-            {search.trim() ? (
-              <button type="button" className="search-save-button" onClick={onSaveSearch} title="Sauver cette requete en smart collection">
-                <LayersIcon size={14} />
-              </button>
-            ) : null}
+        <SearchExperience
+          state={searchState || { query: search, scope: 'current', filters: [] }}
+          onStateChange={onSearchStateChange || ((next) => onSearchChange(next.query))}
+          suggestions={searchSuggestions}
+          resultCount={searchResultCount}
+          advancedChips={searchChips.filter((chip) => chip.kind === 'filter')}
+          status={searchStatus}
+          filterOptions={searchFilterOptions}
+          onCommitSearch={onCommitSearch}
+          onSaveSearch={onSaveSearch}
+          onClearRecents={onClearSearchRecents}
+          onRemoveAdvancedToken={onRemoveAdvancedSearchToken}
+          privateContext={activeScreen === 'vault'}
+        />
+
+        <button type="button" className={`search-help-button ${searchHelpOpen ? 'active' : ''}`} onClick={onToggleSearchHelp} title="Aide recherche avancee">
+          ?
+        </button>
+        {searchHelpOpen ? (
+          <div className="search-help-popover">
+            <strong>Recherche avancee</strong>
+            <span>`tag:romance` `status:unread` `favorite:true` `private:false`</span>
+            <span>`author:"Inoue Takehiko"` `collection:seinen`</span>
+            <span>`missing:cover` `missing:metadata` `chapters&gt;10` `added&lt;30`</span>
           </div>
-
-          {(searchChips.length || searchStatus?.label) ? (
-            <div className="search-chip-row">
-              {searchChips.map((chip) => (
-                <span key={`${chip.kind}-${chip.raw}`} className={`search-chip search-chip-${chip.kind}`}>{chip.label}</span>
-              ))}
-              {searchStatus?.label ? (
-                <span className={`search-chip search-chip-status ${searchStatus.tone || 'neutral'}`}>{searchStatus.label}</span>
-              ) : null}
-            </div>
-          ) : null}
-
-          {searchHelpOpen ? (
-            <div className="search-help-popover">
-              <strong>Recherche avancee</strong>
-              <span>`tag:romance` `status:unread` `favorite:true` `private:false`</span>
-              <span>`author:"Inoue Takehiko"` `collection:seinen`</span>
-              <span>`missing:cover` `missing:metadata` `chapters&gt;10` `added&lt;30`</span>
-            </div>
-          ) : null}
-        </div>
+        ) : null}
 
         <select className="sort-select" value={sort} onChange={(event) => onSortChange(event.target.value)}>
           <option value="title-asc">Titre A-Z</option>

@@ -56,6 +56,15 @@ describe('Kavita reader architecture', () => {
     expect(renderers).not.toContain('const root = event.currentTarget');
   });
 
+  it('keeps paged reader assets eager but lazy-loads Webtoon pages', () => {
+    const renderers = read('src/interfaces/kavita/readerRenderers.jsx');
+
+    expect(renderers).toContain('lazy = false');
+    expect(renderers).toContain("loading={lazy ? 'lazy' : 'eager'}");
+    expect(renderers).toContain('lazy={lazy}');
+    expect(renderers).toContain('className="kv-reader-page" style={imageStyle} lazy');
+  });
+
   it('keeps the Kavita profile separate and does not reveal chrome on pointer movement', () => {
     const shell = read('src/interfaces/kavita/KavitaReaderShell.jsx');
     const controller = read('src/interfaces/kavita/useReaderController.js');

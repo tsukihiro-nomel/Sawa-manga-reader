@@ -1,15 +1,20 @@
+const derivedStore = require('./derivedStore.cjs');
 const {
   getJob,
   listJobs,
   upsertJob,
   markRunningJobsInterrupted
-} = require('./derivedStore.cjs');
+} = derivedStore;
+const pruneTerminalJobs = typeof derivedStore.pruneTerminalJobs === 'function'
+  ? derivedStore.pruneTerminalJobs
+  : null;
 
 const JOB_PRIORITY = {
   scan: 100,
   analyze: 90,
   'source-import': 85,
   export: 80,
+  'bulk-trash': 80,
   ocr: 70,
   hash: 60,
   upscale: 50,
@@ -22,6 +27,7 @@ const JOB_LANE = {
   'deep-scan': 'scanAnalyze',
   'source-import': 'network',
   export: 'export',
+  'bulk-trash': 'filesystem',
   ocr: 'heavy',
   hash: 'heavy',
   upscale: 'heavy'
@@ -35,6 +41,14 @@ function nowIso() {
 
 function makeJobId(kind) {
   return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+class JobInterruptedError extends Error {
+  constructor(message = 'Job interrupted') {
+    super(message);
+    this.name = 'JobInterruptedError';
+    this.interrupted = true;
+  }
 }
 
 function normalizeProfile(profile) {
@@ -53,6 +67,8 @@ function formatJobKind(kind) {
       return 'analyse';
     case 'export':
       return 'export';
+    case 'bulk-trash':
+      return 'suppression';
     case 'source-import':
       return 'import source';
     case 'ocr':
@@ -76,14 +92,18 @@ class JobOrchestrator {
     this.profile = normalizeProfile(options.profile);
     this.processing = false;
     this._scheduled = null;
+    this.jobCache = new Map();
+    this.refreshJobs();
   }
 
   bootstrap() {
+    this.pruneTerminalHistory();
     const interrupted = markRunningJobsInterrupted();
+    this.refreshJobs();
     interrupted
       .filter((job) => job.requeueable && IDEMPOTENT_JOBS.has(job.kind))
       .forEach((job) => {
-        upsertJob({
+        this.storeJob({
           ...job,
           status: 'queued',
           updatedAt: nowIso(),
@@ -115,7 +135,7 @@ class JobOrchestrator {
     const kind = String(input.kind || '').trim();
     if (!kind) throw new Error('Job kind is required');
     const createdAt = nowIso();
-    const job = upsertJob({
+    const job = this.storeJob({
       id: String(input.id || makeJobId(kind)),
       kind,
       priority: Number.isFinite(Number(input.priority)) ? Number(input.priority) : (JOB_PRIORITY[kind] || 0),
@@ -131,27 +151,27 @@ class JobOrchestrator {
       endedAt: null,
       lastError: null
     });
-    this.notify();
+    this.notify(job);
     this.schedule();
     return job;
   }
 
   cancel(jobId) {
-    const job = getJob(jobId);
+    const job = this.readJob(jobId);
     if (!job) return null;
-    const next = upsertJob({
+    const next = this.storeJob({
       ...job,
       status: 'cancel_requested',
       updatedAt: nowIso()
     });
-    this.notify();
+    this.notify(next);
     return next;
   }
 
   retry(jobId) {
-    const job = getJob(jobId);
+    const job = this.readJob(jobId);
     if (!job) return null;
-    const next = upsertJob({
+    const next = this.storeJob({
       ...job,
       status: 'queued',
       updatedAt: nowIso(),
@@ -159,13 +179,41 @@ class JobOrchestrator {
       endedAt: null,
       lastError: null
     });
-    this.notify();
+    this.notify(next);
     this.schedule();
     return next;
   }
 
   list() {
-    return listJobs();
+    return [...this.jobCache.values()].sort((left, right) => {
+      if (left.priority !== right.priority) return right.priority - left.priority;
+      return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    });
+  }
+
+  refreshJobs() {
+    const jobs = listJobs();
+    this.jobCache = new Map(jobs.map((job) => [job.id, job]));
+    return this.list();
+  }
+
+  readJob(jobId) {
+    const job = getJob(jobId);
+    if (job?.id) this.jobCache.set(job.id, job);
+    return job;
+  }
+
+  storeJob(job) {
+    const stored = upsertJob(job);
+    this.jobCache.set(stored.id, stored);
+    return stored;
+  }
+
+  pruneTerminalHistory() {
+    if (!pruneTerminalJobs) return [];
+    const removedIds = pruneTerminalJobs();
+    removedIds.forEach((jobId) => this.jobCache.delete(jobId));
+    return removedIds;
   }
 
   getSyncStatus() {
@@ -211,15 +259,17 @@ class JobOrchestrator {
     };
   }
 
-  schedule() {
+  schedule(delay = 0) {
     if (this._scheduled) return;
     this._scheduled = setTimeout(() => {
       this._scheduled = null;
       this.process().catch(() => {});
-    }, 0);
+    }, Math.max(0, Number(delay) || 0));
+    if (typeof this._scheduled.unref === 'function') this._scheduled.unref();
   }
 
   laneAvailable(job, runningJobs = []) {
+    if (job.lane === 'filesystem') return !runningJobs.some((entry) => entry.lane === 'filesystem');
     if (job.lane === 'export') return runningJobs.length === 0;
     if (job.lane === 'scanAnalyze') return !runningJobs.some((entry) => entry.lane === 'scanAnalyze' || entry.lane === 'export');
     if (job.lane === 'network') {
@@ -230,6 +280,15 @@ class JobOrchestrator {
   }
 
   blockedByProfile(job) {
+    if (job.lane === 'scanAnalyze' && this.readerActive) return true;
+    if (job.lane === 'scanAnalyze') {
+      const source = String(job.payload?.source || '');
+      const explicit = source.includes('manual') || source.includes('maintenance');
+      if (!explicit) {
+        const quietMs = this.profile === 'interactive' ? 2500 : this.profile === 'idle-only' ? 5000 : 1200;
+        if ((Date.now() - this.lastInteractionAt) < quietMs) return true;
+      }
+    }
     if (job.lane !== 'heavy') return false;
     if (this.profile === 'interactive') {
       return this.readerActive || (Date.now() - this.lastInteractionAt) < 60000;
@@ -269,26 +328,32 @@ class JobOrchestrator {
       }
     } finally {
       this.processing = false;
-      this.notify();
+      const hasTemporarilyDeferredJob = !this.readerActive && this.list().some((job) => (
+        job.status === 'queued'
+        && this.blockedByProfile(job)
+        && !(job.lane === 'heavy' && this.profile === 'idle-only')
+      ));
+      if (hasTemporarilyDeferredJob) this.schedule(500);
     }
   }
 
   async runJob(job) {
     const handler = this.handlers[job.kind];
     if (typeof handler !== 'function') {
-      upsertJob({
+      const failedJob = this.storeJob({
         ...job,
         status: 'failed',
         updatedAt: nowIso(),
         endedAt: nowIso(),
         lastError: `No handler registered for ${job.kind}`
       });
-      this.notify();
+      this.pruneTerminalHistory();
+      this.notify(failedJob);
       return;
     }
 
-    const cancelledBeforeStart = (getJob(job.id) || job).status === 'cancel_requested';
-    const startedJob = upsertJob({
+    const cancelledBeforeStart = (this.readJob(job.id) || job).status === 'cancel_requested';
+    const startedJob = this.storeJob({
       ...job,
       status: 'running',
       attempt: Number(job.attempt || 0) + 1,
@@ -297,11 +362,11 @@ class JobOrchestrator {
       endedAt: null,
       lastError: null
     });
-    this.notify();
+    this.notify(startedJob);
 
     const checkpoint = (progress = {}) => {
-      const latest = getJob(startedJob.id) || startedJob;
-      upsertJob({
+      const latest = this.readJob(startedJob.id) || startedJob;
+      const updated = this.storeJob({
         ...latest,
         progress: {
           ...(latest.progress || {}),
@@ -309,7 +374,7 @@ class JobOrchestrator {
         },
         updatedAt: nowIso()
       });
-      this.notify();
+      this.notify(updated);
       return cancelledBeforeStart || latest.status === 'cancel_requested';
     };
 
@@ -317,36 +382,43 @@ class JobOrchestrator {
       await handler({
         job: startedJob,
         checkpoint,
-        isCancelled: () => cancelledBeforeStart || (getJob(startedJob.id)?.status === 'cancel_requested')
+        isCancelled: () => cancelledBeforeStart || (this.readJob(startedJob.id)?.status === 'cancel_requested')
       });
 
-      const completed = getJob(startedJob.id) || startedJob;
+      const completed = this.readJob(startedJob.id) || startedJob;
       const cancelled = cancelledBeforeStart || completed.status === 'cancel_requested';
-      upsertJob({
+      const finishedJob = this.storeJob({
         ...completed,
         status: cancelled ? 'interrupted' : 'done',
         updatedAt: nowIso(),
         endedAt: nowIso(),
         lastError: cancelled ? (cancelledBeforeStart ? 'Cancelled before start' : 'Cancelled by user') : null
       });
+      this.pruneTerminalHistory();
+      this.notify(finishedJob);
     } catch (error) {
-      const failed = getJob(startedJob.id) || startedJob;
-      upsertJob({
+      const failed = this.readJob(startedJob.id) || startedJob;
+      const cancelled = Boolean(
+        error?.interrupted
+        || cancelledBeforeStart
+        || failed.status === 'cancel_requested'
+      );
+      const failedJob = this.storeJob({
         ...failed,
-        status: 'failed',
+        status: cancelled ? 'interrupted' : 'failed',
         updatedAt: nowIso(),
         endedAt: nowIso(),
-        lastError: error?.message || 'Job failed'
+        lastError: error?.message || (cancelled ? 'Job interrupted' : 'Job failed')
       });
+      this.pruneTerminalHistory();
+      this.notify(failedJob);
     }
-
-    this.notify();
   }
 
-  notify() {
+  notify(job = null) {
     if (this.onStateChanged) {
       this.onStateChanged({
-        jobs: this.list(),
+        job,
         syncStatus: this.getSyncStatus()
       });
     }
@@ -357,5 +429,6 @@ module.exports = {
   JOB_PRIORITY,
   JOB_LANE,
   IDEMPOTENT_JOBS,
+  JobInterruptedError,
   JobOrchestrator
 };

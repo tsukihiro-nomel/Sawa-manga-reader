@@ -125,7 +125,14 @@ function applyMetadataOverlay(manga = {}, metadata = {}) {
     aliases
   };
 
-  if (coverPath || onlineCoverPath) {
+  if (metadata.coverMode === 'auto') {
+    const firstChapter = manga.chapters?.[0] || null;
+    next.coverSrc = firstChapter?.previewSrc || null;
+    next.coverType = firstChapter ? 'auto' : 'default';
+    next.coverMediaType = firstChapter?.previewMediaType || 'image';
+    next.coverFilePath = firstChapter?.previewFilePath || (firstChapter?.previewMediaType === 'pdf' ? firstChapter?.path : null);
+    next.coverPageNumber = firstChapter?.previewPageNumber || 1;
+  } else if (coverPath || onlineCoverPath) {
     const finalCoverPath = coverPath || onlineCoverPath;
     next.coverSrc = toFileSrc(finalCoverPath);
     next.coverType = coverPath ? 'custom' : 'online';
@@ -204,7 +211,8 @@ function overlayManga(manga = {}, persistedState = {}) {
     collectionIds: resolveCollectionIdsForManga(manga, persistedState),
     hasNewChapters: typeof knownCount === 'number' && chapterCount > knownCount,
     metadataLocks: getByEntityId(persistedState.metadataLocks, manga) || {},
-    metadataFieldSource: getByEntityId(persistedState.metadataFieldSource, manga) || {}
+    metadataFieldSource: getByEntityId(persistedState.metadataFieldSource, manga) || {},
+    coverProfile: getByEntityId(persistedState.coverProfiles, manga) || null
   };
 }
 

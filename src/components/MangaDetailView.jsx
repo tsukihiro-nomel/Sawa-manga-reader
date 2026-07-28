@@ -1,7 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeftIcon, EditIcon, HeartIcon, LayersIcon, PlayIcon, PlusIcon, ScrollIcon, SearchIcon, SparklesIcon, TagIcon, BookIcon, ClockIcon, ZapIcon } from './Icons.jsx';
 import MediaAsset from './MediaAsset.jsx';
+import PreviewDisplayControls from './PreviewDisplayControls.jsx';
 import { getProgressPercent } from '../utils/reader.js';
+import { paginateItems } from '../utils/paginateItems.js';
+import { normalizePreviewSize, resolvePreviewSize } from '../utils/previewQuality.js';
 
 // ---------------------------------------------------------------------------
 // Scroll restoration
@@ -61,7 +64,7 @@ function middleMouseDown(event) {
   event.preventDefault();
 }
 
-function middleMouseUp(event, callback) {
+function middleAuxClick(event, callback) {
   if (event.button !== 1) return;
   event.preventDefault();
   event.stopPropagation();
@@ -225,11 +228,17 @@ function MangaDetailView({
   onAddToCollection,
   onImportOnlineMetadata,
   onOpenAnnotation,
+  onSelectEdition,
+  onSetPreferredEdition,
+  onUngroupEditions,
+  chapterCardSize = 'comfortable',
+  previewQuality = 'balanced',
+  onPreviewSettingsChange,
   onContextMenu
 }) {
   const containerRef = useRef(null);
   const [showOnlineSearch, setShowOnlineSearch] = useState(false);
-  const [chaptersExpanded, setChaptersExpanded] = useState(false);
+  const [chapterPage, setChapterPage] = useState(0);
   const [chapterSort, setChapterSort] = useState('asc'); // 'asc' | 'desc'
 
   useEffect(() => () => {
@@ -264,7 +273,17 @@ function MangaDetailView({
     return manga.chapters;
   }, [manga.chapters, chapterSort]);
 
-  const displayedChapters = chaptersExpanded ? sortedChapters : sortedChapters.slice(0, 30);
+  const chapterPagination = useMemo(
+    () => paginateItems(sortedChapters, chapterPage, 50),
+    [chapterPage, sortedChapters]
+  );
+  const displayedChapters = chapterPagination.items;
+  const normalizedChapterCardSize = normalizePreviewSize(chapterCardSize);
+  const chapterPreviewDimensions = resolvePreviewSize('chapter', normalizedChapterCardSize);
+
+  useEffect(() => {
+    setChapterPage(0);
+  }, [chapterSort, manga.id]);
   const sortedAnnotations = useMemo(
     () => [...(annotations || [])].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()),
     [annotations]
@@ -388,6 +407,33 @@ function MangaDetailView({
       </div>
 
       {/* Info panels — compact 2-column layout */}
+      {manga.workGroup?.editionCount > 1 ? (
+        <div className="detail-editions-panel">
+          <div>
+            <span className="detail-info-label">Œuvre canonique</span>
+            <strong>{manga.workGroup.editionCount} éditions reliées</strong>
+          </div>
+          <label>
+            <span>Édition affichée</span>
+            <select value={manga.id} onChange={(event) => onSelectEdition?.(event.target.value)}>
+              {manga.workGroup.editions.map((edition) => (
+                <option key={edition.id} value={edition.id}>{edition.title || edition.path || edition.id}</option>
+              ))}
+            </select>
+          </label>
+          <div className="maintenance-inline-actions">
+            {manga.workGroup.preferredEditionId !== manga.id ? (
+              <button type="button" className="primary-button" onClick={() => onSetPreferredEdition?.(manga.workGroup.id, manga.id)}>
+                Définir comme préférée
+              </button>
+            ) : <span className="badge-pill badge-pill-collection">Édition préférée</span>}
+            <button type="button" className="ghost-button" onClick={() => onUngroupEditions?.(manga.workGroup.id)}>
+              Dégrouper
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="detail-panels">
         {/* Row 1: Description + Informations side by side */}
         <div className="detail-panels-row">
@@ -567,16 +613,28 @@ function MangaDetailView({
           </div>
         </div>
 
-        <div className="chapter-grid">
+        <div className="preview-controls-row">
+          <PreviewDisplayControls
+            compact
+            kind="chapter"
+            size={normalizedChapterCardSize}
+            quality={previewQuality}
+            onSizeChange={(value) => onPreviewSettingsChange?.({ chapterCardSize: value })}
+            onQualityChange={(value) => onPreviewSettingsChange?.({ previewQuality: value })}
+          />
+        </div>
+
+        <div className="chapter-grid" data-preview-size={normalizedChapterCardSize}>
           {displayedChapters.map((chapter, index) => {
-            const realIndex = chapterSort === 'desc' ? totalChapters - 1 - index : index;
+            const absoluteIndex = chapterPagination.start + index;
+            const realIndex = chapterSort === 'desc' ? totalChapters - 1 - absoluteIndex : absoluteIndex;
             return (
               <button
                 key={chapter.id}
                 className={`chapter-card ${chapter.isRead ? 'chapter-card-read' : ''}`}
                 onClick={() => onOpenChapter(chapter.id)}
                 onMouseDown={middleMouseDown}
-                onMouseUp={(event) => middleMouseUp(event, () => onOpenChapterInBackgroundTab(chapter.id))}
+                onAuxClick={(event) => middleAuxClick(event, () => onOpenChapterInBackgroundTab(chapter.id))}
                 onContextMenu={(event) => onContextMenu(event, { type: 'chapter', manga, chapter })}
               >
                 <div className="chapter-cover-wrap">
@@ -590,8 +648,10 @@ function MangaDetailView({
                         mediaType={chapter.previewMediaType || chapter.sourceType || 'image'}
                         filePath={chapter.previewFilePath || chapter.path}
                         pageNumber={chapter.previewPageNumber || 1}
-                        maxWidth={220}
-                        maxHeight={320}
+                        maxWidth={chapterPreviewDimensions.width}
+                        maxHeight={chapterPreviewDimensions.height}
+                        thumbnail
+                        previewQuality={previewQuality}
                       />
                     )
                     : <div className="cover-fallback">{realIndex + 1}</div>
@@ -607,11 +667,13 @@ function MangaDetailView({
           })}
         </div>
 
-        {sortedChapters.length > 30 && !chaptersExpanded && (
-          <button className="ghost-button detail-show-all-chapters" onClick={() => setChaptersExpanded(true)}>
-            Afficher les {sortedChapters.length - 30} chapitres restants
-          </button>
-        )}
+        {chapterPagination.totalPages > 1 ? (
+          <div className="chapter-pagination" aria-label="Pagination des chapitres">
+            <button type="button" className="ghost-button" disabled={chapterPagination.page === 0} onClick={() => setChapterPage((page) => Math.max(0, page - 1))}>Precedents</button>
+            <span>{chapterPagination.start + 1}-{chapterPagination.end} sur {sortedChapters.length}</span>
+            <button type="button" className="ghost-button" disabled={chapterPagination.page >= chapterPagination.totalPages - 1} onClick={() => setChapterPage((page) => Math.min(chapterPagination.totalPages - 1, page + 1))}>Suivants</button>
+          </div>
+        ) : null}
       </div>
 
       {showOnlineSearch && (

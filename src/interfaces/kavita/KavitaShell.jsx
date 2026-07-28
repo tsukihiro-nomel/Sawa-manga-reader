@@ -18,7 +18,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
-  Search,
   Settings,
   Square,
   SlidersHorizontal,
@@ -33,10 +32,14 @@ import KavitaToolsView from './KavitaToolsView.jsx';
 import KavitaReaderShell from './KavitaReaderShell.jsx';
 import KavitaTabsBar from './KavitaTabsBar.jsx';
 import KavitaVaultView from './KavitaVaultView.jsx';
+import PreviewDisplayControls from '../../components/PreviewDisplayControls.jsx';
+import SearchExperience from '../../components/SearchExperience.jsx';
+import BulkActionBar from '../../components/BulkActionBar.jsx';
 import KavitaEditorDialog from './KavitaEditorDialog.jsx';
 import KavitaContextMenu from './KavitaContextMenu.jsx';
 import KavitaOnlineMetadataDialog from './KavitaOnlineMetadataDialog.jsx';
 import { resolveEditorManga, resolveMangaCollections } from './kavitaState.js';
+import { isTextContextRequest } from '../../utils/textContextMenu.js';
 import './kavita.css';
 
 const MAIN_NAV = [
@@ -107,6 +110,24 @@ function KavitaSettingsPanel({ ui, onChange, onRequestInterfaceMode, onClose }) 
           <label className="kv-settings-toggle"><span>Apercu avant lecture</span><input type="checkbox" checked={Boolean(ui.showPagePreviewBeforeReading)} onChange={(event) => onChange({ showPagePreviewBeforeReading: event.target.checked })} /></label>
           <label className="kv-settings-toggle"><span>Masquage auto du lecteur</span><input type="checkbox" checked={Boolean(ui.autoHideReaderUI)} onChange={(event) => onChange({ autoHideReaderUI: event.target.checked })} /></label>
         </section>
+        <section>
+          <h3>Aperçus</h3>
+          <PreviewDisplayControls
+            kind="chapter"
+            size={ui.chapterCardSize}
+            quality={ui.previewQuality}
+            onSizeChange={(value) => onChange({ chapterCardSize: value })}
+            onQualityChange={(value) => onChange({ previewQuality: value })}
+          />
+          <PreviewDisplayControls
+            kind="page"
+            size={ui.pagePreviewSize}
+            quality={ui.previewQuality}
+            showQuality={false}
+            onSizeChange={(value) => onChange({ pagePreviewSize: value })}
+            onQualityChange={(value) => onChange({ previewQuality: value })}
+          />
+        </section>
       </aside>
     </div>
   );
@@ -125,9 +146,12 @@ function KavitaShell({ model }) {
     currentChapter,
     annotations,
     collections,
+    collectionShowcase = collections,
     tags,
     maintenanceIssues,
     maintenanceStats,
+    identitySuggestions = [],
+    identityBusy = false,
     workbenchMangas,
     vault,
     vaultMangas = [],
@@ -136,14 +160,26 @@ function KavitaShell({ model }) {
     plugins,
     migrationStatus,
     syncStatus,
+    scrollKey,
+    initialScrollPosition,
+    initialScrollTop,
+    onScrollPositionChange,
     tabs,
     activeTabId,
     workspaces = [],
     activeWorkspaceId,
     search,
+    searchState,
+    searchSuggestions = [],
+    searchResultCount = 0,
+    searchChips = [],
+    searchStatus = null,
+    searchFilterOptions = {},
     settingsOpen,
     selectionMode,
     selectedIds,
+    selectionHiddenCount = 0,
+    bulkTrashJobStatus = null,
     actions
   } = model;
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -243,6 +279,7 @@ function KavitaShell({ model }) {
     [currentManga, library, onlineMetadataMangaId]
   );
   const openContextMenu = (event, context) => {
+    if (isTextContextRequest(event)) return;
     event.preventDefault();
     event.stopPropagation();
     setContextMenu({
@@ -309,11 +346,22 @@ function KavitaShell({ model }) {
         <button type="button" className="kv-brand" onClick={() => actions.onScreenChange('dashboard')}>
           <span><BookOpen size={18} /></span><strong>Sawa</strong>
         </button>
-        <label className="kv-global-search">
-          <Search size={17} />
-          <input value={search} onChange={(event) => actions.onSearchChange(event.target.value)} placeholder="Rechercher dans Sawa..." />
-          {search ? <button type="button" onClick={() => actions.onSearchChange('')}><X size={15} /></button> : null}
-        </label>
+        <SearchExperience
+          compact
+          className="kv-shared-search"
+          state={searchState || { query: search, scope: 'current', filters: [] }}
+          onStateChange={actions.onSearchStateChange || ((next) => actions.onSearchChange(next.query))}
+          suggestions={searchSuggestions}
+          resultCount={searchResultCount}
+          advancedChips={searchChips.filter((chip) => chip.kind === 'filter')}
+          status={searchStatus}
+          filterOptions={searchFilterOptions}
+          onCommitSearch={actions.onCommitSearch}
+          onSaveSearch={actions.onSaveSearch}
+          onClearRecents={actions.onClearSearchRecents}
+          onRemoveAdvancedToken={actions.onRemoveAdvancedSearchToken}
+          privateContext={activeScreen === 'vault'}
+        />
         <div className="kv-topbar-status" title={syncStatus?.task || 'Taches en arriere-plan'}>
           <CircleGauge size={17} />
           <span>{syncStatus?.running ? 'Travail en cours' : 'A jour'}</span>
@@ -396,8 +444,30 @@ function KavitaShell({ model }) {
       />
 
       <main className="kv-main">
-        {selectionMode && selectedCount > 0 ? (
-          <div className="kv-selection-bar"><strong>{selectedCount} selectionne(s)</strong><button type="button" onClick={actions.onClearSelection}>Effacer</button></div>
+        {selectionMode ? (
+          <BulkActionBar
+            selectionCount={selectedCount}
+            hiddenCount={selectionHiddenCount}
+            onClear={actions.onClearSelection}
+            onExit={actions.onExitSelection}
+            onSelectAll={actions.onSelectAllSelection}
+            onInvert={actions.onInvertSelection}
+            onMarkRead={() => actions.onBulkRead(true)}
+            onMarkUnread={() => actions.onBulkRead(false)}
+            onFavorite={() => actions.onBulkFavorite(true)}
+            onUnfavorite={() => actions.onBulkFavorite(false)}
+            onOpenCollectionPicker={actions.onOpenBulkCollectionPicker}
+            onOpenTagPicker={actions.onOpenBulkTagPicker}
+            onQueueWorkbench={actions.onBulkQueueWorkbench}
+            onVaultToggle={actions.onBulkVaultToggle}
+            vaultActionLabel={actions.bulkVaultActionLabel}
+            onGroupEditions={actions.onBulkGroupEditions}
+            onTrash={actions.onBulkTrash}
+            trashJob={bulkTrashJobStatus}
+            onCancelTrash={actions.onCancelBulkTrash}
+            onUndo={actions.onBulkUndo}
+            undoLabel={actions.bulkUndoLabel}
+          />
         ) : null}
 
         {activeView.screen === 'library' && ['library', 'favorites', 'recents'].includes(activeScreen) ? (
@@ -412,6 +482,10 @@ function KavitaShell({ model }) {
             onContextMenu={openContextMenu}
             onToggleFavorite={actions.onToggleFavorite}
             onToggleSelect={actions.onToggleSelect}
+            scrollKey={scrollKey}
+            initialScrollPosition={initialScrollPosition}
+            initialScrollTop={initialScrollTop}
+            onScrollPositionChange={onScrollPositionChange}
           />
         ) : null}
 
@@ -435,6 +509,10 @@ function KavitaShell({ model }) {
             onContextMenu={openContextMenu}
             onToggleBlur={actions.onToggleVaultBlur}
             onToggleStealth={actions.onToggleVaultStealth}
+            scrollKey={scrollKey}
+            initialScrollPosition={initialScrollPosition}
+            initialScrollTop={initialScrollTop}
+            onScrollPositionChange={onScrollPositionChange}
           />
         ) : null}
 
@@ -442,9 +520,11 @@ function KavitaShell({ model }) {
           <KavitaToolsView
             screen={activeScreen}
             library={library}
-            collections={collections}
+            collections={collectionShowcase}
             maintenanceIssues={maintenanceIssues}
             maintenanceStats={maintenanceStats}
+            identitySuggestions={identitySuggestions}
+            identityBusy={identityBusy}
             workbenchMangas={workbenchMangas}
             plugins={plugins}
             migrationStatus={migrationStatus}
@@ -456,6 +536,8 @@ function KavitaShell({ model }) {
             onRebuildDerivedData={actions.onRebuildDerivedData}
             onAnalyzeMigration={actions.onAnalyzeMigration}
             onRunMigration={actions.onRunMigration}
+            onAnalyzeIdentities={actions.onAnalyzeIdentities}
+            onDecideIdentitySuggestion={actions.onDecideIdentitySuggestion}
             onOpenSettings={() => actions.onSettingsOpenChange(true)}
           />
         ) : null}
@@ -471,8 +553,15 @@ function KavitaShell({ model }) {
             onToggleFavorite={actions.onToggleFavorite}
             collections={currentMangaCollections}
             onEditMetadata={() => setEditor({ type: 'metadata', mangaId: currentManga.id })}
+            onManageCover={actions.onPickCover}
             onManageTags={() => setEditor({ type: 'tags', mangaId: currentManga.id })}
             onAddToCollection={() => setEditor({ type: 'collections', mangaId: currentManga.id })}
+            onSelectEdition={actions.onSelectEdition}
+            onSetPreferredEdition={actions.onSetPreferredEdition}
+            onUngroupEditions={actions.onUngroupEditions}
+            chapterCardSize={ui.chapterCardSize}
+            previewQuality={ui.previewQuality}
+            onPreviewSettingsChange={actions.onUpdateSettings}
             onContextMenu={openContextMenu}
           />
         ) : null}
@@ -482,6 +571,9 @@ function KavitaShell({ model }) {
             manga={currentManga}
             chapter={currentChapter}
             annotations={annotations}
+            pagePreviewSize={ui.pagePreviewSize}
+            previewQuality={ui.previewQuality}
+            onPreviewSettingsChange={actions.onUpdateSettings}
             onBack={actions.onBack}
             onReadFrom={(pageIndex) => actions.onReadFrom(currentManga.id, currentChapter.id, pageIndex)}
             onReadFromInNewTab={(pageIndex, options) => actions.onReadFromInNewTab(currentManga.id, currentChapter.id, pageIndex, options)}
@@ -510,6 +602,7 @@ function KavitaShell({ model }) {
         onAddToCollection={actions.onAddToCollection}
         onRemoveFromCollection={actions.onRemoveFromCollection}
         onCreateCollection={actions.onCreateCollection}
+        onOpenCover={actions.onPickCover}
       />
       <KavitaOnlineMetadataDialog
         manga={onlineMetadataManga}

@@ -1,14 +1,43 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { app } = require('electron');
+const { createAtomicJsonPersistence } = require('./atomicJsonPersistence.cjs');
+const { runHeavyIoTask } = require('./heavyIoClient.cjs');
+const {
+  cleanupStagedBackup,
+  recoverManagedCoverTransaction
+} = require('./backupPackage.cjs');
+const {
+  normalizeCollectionAppearance,
+  normalizeCoverProfile,
+  rebaseManagedCoverProfile,
+  stableLegacyVariantId
+} = require('./coverManager.cjs');
+const { sanitizeDeletionTombstone } = require('./bulkTrash.cjs');
 
-const STORAGE_VERSION = 3;
-const STATE_VERSION = 3;
+// `electron` is only resolvable in the main/renderer process. This module is
+// also loaded from worker threads (library scan / derived sync), where
+// `require('electron')` throws "Cannot find module 'electron'". Resolve it
+// lazily and tolerate its absence; worker threads rely on the
+// SAWA_USER_DATA_PATH override instead.
+let cachedElectronApp;
+function getElectronApp() {
+  if (cachedElectronApp !== undefined) return cachedElectronApp;
+  try {
+    cachedElectronApp = require('electron').app || null;
+  } catch (error) {
+    cachedElectronApp = null;
+  }
+  return cachedElectronApp;
+}
+
+const STORAGE_VERSION = 4;
+const STATE_VERSION = 4;
 const SCAN_INDEX_VERSION = 1;
 const QUEUE_VERSION = 1;
 const METADATA_VERSION = 1;
 const SPLIT_STORAGE_VERSION = 1;
+const SEARCH_PRIVACY_VERSION = 1;
 const MAX_WORKSPACES = 8;
 const WORKSPACE_ICON_KEYS = ['home', 'library', 'layout', 'scroll', 'heart', 'sparkles', 'layers', 'book'];
 const ROOT_STATE_FILE = 'state.json';
@@ -17,6 +46,8 @@ const LEGACY_V1_STATE_FILE = 'sawa-manga-state.json';
 const USER_DATA_DIRNAME = 'user-data';
 const DERIVED_DIRNAME = 'derived';
 const CACHE_DIRNAME = 'cache';
+const MANAGED_COVERS_DIRNAME = 'managed-covers';
+const BACKUP_IMPORT_JOURNAL_FILE = 'backup-import-transaction.json';
 const USER_DATA_FILES = {
   metadata: 'metadata.json',
   organization: 'organization.json',
@@ -42,10 +73,10 @@ const ROOT_STATE_KEYS = [
 ];
 
 const USER_DATA_KEY_GROUPS = {
-  metadata: ['metadata', 'metadataLocks', 'metadataFieldSource'],
+  metadata: ['metadata', 'metadataLocks', 'metadataFieldSource', 'coverProfiles'],
   organization: ['favorites', 'tags', 'mangaTags', 'mangaTagMeta', 'collections', 'smartCollections', 'annotations', 'metadataWorkbenchQueue', 'readingQueue', 'plugins'],
   reader: ['readingStates', 'chapterStates', 'readStatus', 'chapterReadStatus', 'progress', 'recents', 'readerPrefs'],
-  identity: ['knownChapterCounts', 'identityAliases']
+  identity: ['knownChapterCounts', 'identityAliases', 'identityRecords', 'identitySuggestions', 'identityMediaIssues', 'workGroups', 'deletionTombstones']
 };
 
 const DEFAULT_SIDEBAR_SECTIONS = [
@@ -96,7 +127,13 @@ const DEFAULT_STATE = {
     updatedAt: null,
     entries: {}
   },
-  session: { version: 2, activeWorkspaceId: null, workspaces: [] },
+  session: {
+    version: 4,
+    searchPrivacyVersion: SEARCH_PRIVACY_VERSION,
+    activeWorkspaceId: null,
+    workspaces: [],
+    scrollPositions: {}
+  },
   ui: {
     theme: 'dark-night',
     interfaceMode: 'kavita',
@@ -106,6 +143,9 @@ const DEFAULT_STATE = {
     sidebarCollapsed: false,
     sort: 'title-asc',
     cardSize: 'comfortable',
+    chapterCardSize: 'comfortable',
+    pagePreviewSize: 'comfortable',
+    previewQuality: 'balanced',
     accent: '#8b5cf6',
     accentAlt: '#38bdf8',
     showPagePreviewBeforeReading: true,
@@ -146,6 +186,7 @@ const DEFAULT_STATE = {
       ocr: true,
       visualDedupe: false,
       pluginPreview: true,
+      performanceDiagnostics: false,
       schedulerProfile: 'balanced'
     },
     filters: { readStatus: 'all', favoriteOnly: false, hasDescription: null, hasCustomCover: null, tags: [], collections: [] },
@@ -154,6 +195,7 @@ const DEFAULT_STATE = {
   metadata: {},
   metadataLocks: {},
   metadataFieldSource: {},
+  coverProfiles: {},
   favorites: {},
   tags: {},
   mangaTags: {},
@@ -198,6 +240,11 @@ const DEFAULT_STATE = {
   recents: [],
   knownChapterCounts: {},
   identityAliases: {},
+  identityRecords: {},
+  identitySuggestions: [],
+  identityMediaIssues: [],
+  workGroups: {},
+  deletionTombstones: {},
   readerPrefs: {},
   backupHistory: [],
   migrationLog: []
@@ -208,15 +255,18 @@ function ensureDir(dirPath) {
 }
 
 let cachedState = null;
+let runtimeStateReadOnly = false;
+let backupImportTail = Promise.resolve();
 
 function getUserDataPath() {
-  if (app && typeof app.getPath === 'function') {
-    return app.getPath('userData');
-  }
   const overridePath = String(process.env.SAWA_USER_DATA_PATH || '').trim();
   if (overridePath) {
     ensureDir(overridePath);
     return overridePath;
+  }
+  const app = getElectronApp();
+  if (app && typeof app.getPath === 'function') {
+    return app.getPath('userData');
   }
   const fallbackPath = path.join(os.tmpdir(), 'sawa-manga-library-cli');
   ensureDir(fallbackPath);
@@ -346,17 +396,61 @@ function normalizeView(view = {}) {
   };
 }
 
+function normalizeSearchState(candidate, legacyQuery = '') {
+  const source = candidate && typeof candidate === 'object' ? candidate : {};
+  const allowedScopes = new Set(['current', 'all']);
+  const allowedFields = new Set([
+    'tag',
+    'status',
+    'favorite',
+    'private',
+    'author',
+    'collection',
+    'missing',
+    'chapters',
+    'added'
+  ]);
+  const allowedOperators = new Set([':', '=', '>', '>=', '<', '<=']);
+  const filters = (Array.isArray(source.filters) ? source.filters : [])
+    .slice(0, 24)
+    .map((filter, index) => {
+      if (!filter || typeof filter !== 'object') return null;
+      const field = String(filter.field || '').trim().toLowerCase().slice(0, 32);
+      const value = String(filter.value || '').trim().slice(0, 256);
+      if (!allowedFields.has(field) || !value) return null;
+      return {
+        id: String(filter.id || `filter-${field}-${index}`).trim().slice(0, 96),
+        field,
+        operator: allowedOperators.has(filter.operator) ? filter.operator : ':',
+        value,
+        label: String(filter.label || '').trim().slice(0, 256)
+      };
+    })
+    .filter(Boolean);
+  return {
+    query: String(source.query ?? legacyQuery ?? '').trim().slice(0, 512),
+    scope: allowedScopes.has(source.scope) ? source.scope : 'current',
+    filters
+  };
+}
+
 function normalizeTab(candidate, fallbackIdPrefix = 'restored') {
   const stack = Array.isArray(candidate?.stack) && candidate.stack.length > 0
     ? candidate.stack.map(normalizeView)
     : [normalizeView()];
+  const incognito = Boolean(candidate?.incognito);
+  const searchPrivate = Boolean(candidate?.searchPrivate);
 
   return {
     id: typeof candidate?.id === 'string' && candidate.id.trim()
       ? candidate.id
       : `${fallbackIdPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     pinned: Boolean(candidate?.pinned),
-    incognito: Boolean(candidate?.incognito),
+    incognito,
+    searchPrivate: false,
+    searchState: incognito || searchPrivate
+      ? normalizeSearchState(null)
+      : normalizeSearchState(candidate?.searchState, candidate?.search),
     stack
   };
 }
@@ -391,24 +485,63 @@ function normalizeWorkspace(candidate, index = 0) {
   };
 }
 
-function normalizeSessionState(session) {
-  if (session?.version === 2 && Array.isArray(session?.workspaces) && session.workspaces.length > 0) {
+function normalizeSessionState(session, options = {}) {
+  const sourcePrivacyVersion = options.sourceSearchPrivacyVersion === undefined
+    ? session?.searchPrivacyVersion
+    : options.sourceSearchPrivacyVersion;
+  const requiresSearchPrivacyMigration = Number(sourcePrivacyVersion || 0) < SEARCH_PRIVACY_VERSION;
+  const migrateTabs = (tabs) => requiresSearchPrivacyMigration
+    ? tabs.map((tab) => ({
+        ...tab,
+        searchPrivate: false,
+        searchState: normalizeSearchState(null)
+      }))
+    : tabs;
+  const normalizeScrollPositions = (positions) => Object.fromEntries(
+    Object.entries(positions && typeof positions === 'object' ? positions : {})
+      .map(([key, value]) => {
+        const fallbackOffset = Number(typeof value === 'number' ? value : value?.fallbackOffset);
+        const intraRowOffset = Number(value?.intraRowOffset);
+        const updatedAt = Number(value?.updatedAt);
+        if (!key || !Number.isFinite(fallbackOffset)) return null;
+        return [key, {
+          anchorId: typeof value?.anchorId === 'string' && value.anchorId ? value.anchorId : null,
+          intraRowOffset: Number.isFinite(intraRowOffset) ? intraRowOffset : 0,
+          fallbackOffset: Math.max(0, fallbackOffset),
+          layoutKey: typeof value?.layoutKey === 'string' ? value.layoutKey : '',
+          updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0
+        }];
+      })
+      .filter(Boolean)
+      .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
+      .slice(-256)
+  );
+
+  if ([2, 3, 4].includes(Number(session?.version)) && Array.isArray(session?.workspaces) && session.workspaces.length > 0) {
     const workspaces = session.workspaces
       .slice(0, MAX_WORKSPACES)
-      .map((workspace, index) => normalizeWorkspace(workspace, index));
+      .map((workspace, index) => {
+        const normalizedWorkspace = normalizeWorkspace(workspace, index);
+        return {
+          ...normalizedWorkspace,
+          tabs: migrateTabs(normalizedWorkspace.tabs)
+        };
+      });
 
     return {
-      version: 2,
+      version: 4,
+      searchPrivacyVersion: SEARCH_PRIVACY_VERSION,
       workspaces,
       activeWorkspaceId: workspaces.some((workspace) => workspace.id === session?.activeWorkspaceId)
         ? session.activeWorkspaceId
-        : workspaces[0].id
+        : workspaces[0].id,
+      scrollPositions: Number(session?.version) >= 3 ? normalizeScrollPositions(session.scrollPositions) : {}
     };
   }
 
-  const legacyTabs = Array.isArray(session?.tabs) && session.tabs.length > 0
+  const legacyTabs = migrateTabs(Array.isArray(session?.tabs) && session.tabs.length > 0
     ? session.tabs.map((tab, index) => normalizeTab(tab, `legacy-${index}`))
-    : [normalizeTab(null, 'legacy-0')];
+    : [normalizeTab(null, 'legacy-0')]);
 
   const legacyActiveTabId = legacyTabs.some((tab) => tab.id === session?.activeTabId)
     ? session.activeTabId
@@ -423,10 +556,22 @@ function normalizeSessionState(session) {
   }, 0);
 
   return {
-    version: 2,
+    version: 4,
+    searchPrivacyVersion: SEARCH_PRIVACY_VERSION,
     workspaces: [defaultWorkspace],
-    activeWorkspaceId: defaultWorkspace.id
+    activeWorkspaceId: defaultWorkspace.id,
+    scrollPositions: {}
   };
+}
+
+function normalizePersistedSessionPayload(payload) {
+  return normalizeSessionState(payload);
+}
+
+function getManagedCoverDir() {
+  const dirPath = path.join(getStateDir(), MANAGED_COVERS_DIRNAME);
+  fs.mkdirSync(dirPath, { recursive: true });
+  return dirPath;
 }
 
 function normalizeQueueItem(entry, index = 0) {
@@ -507,11 +652,17 @@ function normalizeScanIndex(scanIndex) {
     const pathValue = String(value.path || '').trim();
     const locationId = String(value.locationId || value.id || value.path || '').trim();
     if (!pathValue || !locationId) continue;
+    const type = String(value.type || value.kind || '').trim() || 'item';
+    const nullableNumber = (input) => {
+      if (input === null || input === undefined || input === '') return null;
+      const parsed = Number(input);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
     entries[locationId] = {
       locationId,
       path: pathValue,
       kind: String(value.kind || value.type || '').trim() || 'item',
-      type: String(value.type || value.kind || '').trim() || 'item',
+      type,
       legacyId: String(value.legacyId || '').trim() || null,
       contentId: String(value.contentId || '').trim() || null,
       containerType: String(value.containerType || '').trim() || null,
@@ -519,8 +670,9 @@ function normalizeScanIndex(scanIndex) {
       healthStatus: String(value.healthStatus || '').trim() || 'ok',
       size: Number.isFinite(Number(value.size)) ? Number(value.size) : 0,
       mtimeMs: Number.isFinite(Number(value.mtimeMs)) ? Number(value.mtimeMs) : 0,
-      pageCount: Number.isFinite(Number(value.pageCount)) ? Number(value.pageCount) : null,
-      chapterCount: Number.isFinite(Number(value.chapterCount)) ? Number(value.chapterCount) : null,
+      pageCount: nullableNumber(value.pageCount),
+      chapterCount: type === 'chapter' ? null : nullableNumber(value.chapterCount),
+      signature: String(value.signature || '').trim() || null,
       categoryId: value.categoryId ? String(value.categoryId) : null,
       mangaContentId: value.mangaContentId ? String(value.mangaContentId) : null,
       lastError: value.lastError ? String(value.lastError) : null,
@@ -557,11 +709,60 @@ function normalizeState(state) {
       })).filter((category) => category.path)
     : [];
 
-  normalized.session = normalizeSessionState(normalized.session);
+  normalized.session = normalizeSessionState(normalized.session, {
+    sourceSearchPrivacyVersion: state?.session?.searchPrivacyVersion
+  });
+  normalized.session.version = 4;
   normalized.scanIndex = normalizeScanIndex(normalized.scanIndex);
   normalized.readingQueue = normalizeQueue(normalized.readingQueue);
   normalized.metadataLocks = normalizeMetadataFieldMap(normalized.metadataLocks);
   normalized.metadataFieldSource = normalizeMetadataFieldMap(normalized.metadataFieldSource);
+  normalized.coverProfiles = normalized.coverProfiles && typeof normalized.coverProfiles === 'object' && !Array.isArray(normalized.coverProfiles)
+    ? Object.fromEntries(
+        Object.entries(normalized.coverProfiles)
+          .map(([mangaId, profile]) => {
+            const id = String(mangaId || '').trim();
+            return id ? [id, rebaseManagedCoverProfile(profile, getManagedCoverDir(), id)] : null;
+          })
+          .filter(Boolean)
+      )
+    : {};
+  for (const [mangaId, metadata] of Object.entries(normalized.metadata || {})) {
+    if (!metadata || typeof metadata !== 'object') continue;
+    const profile = normalizeCoverProfile(normalized.coverProfiles[mangaId], mangaId);
+    const variants = [...profile.variants];
+    const addLegacy = (kind, filePath, label) => {
+      const normalizedPath = String(filePath || '').trim();
+      if (!normalizedPath) return;
+      const id = stableLegacyVariantId(kind, normalizedPath);
+      if (variants.some((variant) => variant.id === id)) return;
+      variants.push({
+        id,
+        hash: null,
+        path: normalizedPath,
+        fileName: path.basename(normalizedPath),
+        kind,
+        label,
+        createdAt: null
+      });
+    };
+    if (path.basename(String(metadata.coverPath || '')).toLowerCase().startsWith('.sawa-custom-cover')) {
+      addLegacy('legacy-custom', metadata.coverPath, 'Ancienne couverture personnalisée');
+    }
+    if (path.basename(String(metadata.onlineCoverPath || '')).toLowerCase().startsWith('.sawa-online-cover')) {
+      addLegacy('legacy-online', metadata.onlineCoverPath, 'Ancienne couverture en ligne');
+    }
+    if (variants.length > 0) {
+      normalized.coverProfiles[mangaId] = normalizeCoverProfile({ ...profile, variants }, mangaId);
+    }
+    const activeVariant = normalized.coverProfiles[mangaId]?.variants?.find(
+      (variant) => variant.id === normalized.coverProfiles[mangaId]?.activeVariantId
+    );
+    if (activeVariant?.kind === 'managed') {
+      metadata.coverPath = activeVariant.path;
+      metadata.coverMode = 'custom';
+    }
+  }
 
   normalized.mangaTags = normalized.mangaTags && typeof normalized.mangaTags === 'object' ? normalized.mangaTags : {};
   normalized.mangaTagMeta = normalized.mangaTagMeta && typeof normalized.mangaTagMeta === 'object' ? normalized.mangaTagMeta : {};
@@ -575,6 +776,15 @@ function normalizeState(state) {
   normalized.ui.interfaceMode = migratingLegacyKavita || requestedInterfaceMode === 'kavita'
     ? 'kavita'
     : 'sawa';
+  normalized.ui.chapterCardSize = ['compact', 'comfortable', 'large'].includes(String(normalized.ui.chapterCardSize || '').trim())
+    ? String(normalized.ui.chapterCardSize).trim()
+    : DEFAULT_STATE.ui.chapterCardSize;
+  normalized.ui.pagePreviewSize = ['compact', 'comfortable', 'large'].includes(String(normalized.ui.pagePreviewSize || '').trim())
+    ? String(normalized.ui.pagePreviewSize).trim()
+    : DEFAULT_STATE.ui.pagePreviewSize;
+  normalized.ui.previewQuality = ['economy', 'balanced', 'high'].includes(String(normalized.ui.previewQuality || '').trim())
+    ? String(normalized.ui.previewQuality).trim()
+    : DEFAULT_STATE.ui.previewQuality;
   const allowedSidebarSections = new Set(DEFAULT_SIDEBAR_SECTIONS);
   const rawSidebarSections = Array.isArray(normalized.ui.sidebarSections)
     ? normalized.ui.sidebarSections
@@ -671,6 +881,132 @@ function normalizeState(state) {
           .filter(([alias, target]) => alias && target)
       )
     : {};
+  normalized.identityRecords = normalized.identityRecords && typeof normalized.identityRecords === 'object' && !Array.isArray(normalized.identityRecords)
+    ? Object.fromEntries(
+        Object.entries(normalized.identityRecords)
+          .map(([mangaId, record]) => {
+            if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+            const normalizedId = String(record.mangaId || mangaId || '').trim();
+            if (!normalizedId) return null;
+            return [normalizedId, {
+              ...record,
+              mangaId: normalizedId,
+              path: String(record.path || '').trim() || null,
+              title: String(record.title || '').trim(),
+              normalizedTitles: uniqueStrings(record.normalizedTitles),
+              author: String(record.author || '').trim(),
+              normalizedAuthor: String(record.normalizedAuthor || '').trim(),
+              externalIds: uniqueStrings(record.externalIds),
+              chapterFingerprints: uniqueStrings(record.chapterFingerprints),
+              private: Boolean(record.private),
+              strongFingerprint: String(record.strongFingerprint || '').trim() || null
+            }];
+          })
+          .filter(Boolean)
+      )
+    : {};
+  normalized.deletionTombstones = normalized.deletionTombstones
+    && typeof normalized.deletionTombstones === 'object'
+    && !Array.isArray(normalized.deletionTombstones)
+    ? Object.fromEntries(
+        Object.entries(normalized.deletionTombstones)
+          .map(([mangaId, tombstone]) => {
+            const normalizedId = String(mangaId || '').trim();
+            const sanitized = sanitizeDeletionTombstone(tombstone, normalizedId);
+            return normalizedId && sanitized ? [normalizedId, sanitized] : null;
+          })
+          .filter(Boolean)
+      )
+    : {};
+  const identityNow = new Date().toISOString();
+  normalized.identitySuggestions = (Array.isArray(normalized.identitySuggestions) ? normalized.identitySuggestions : [])
+    .map((suggestion) => {
+      if (!suggestion || typeof suggestion !== 'object') return null;
+      const id = String(suggestion.id || '').trim();
+      const fromMangaId = String(suggestion.fromMangaId || '').trim();
+      const toMangaId = String(suggestion.toMangaId || '').trim();
+      if (!id || !fromMangaId || !toMangaId || fromMangaId === toMangaId) return null;
+      return {
+        id,
+        kind: ['move', 'edition'].includes(suggestion.kind) ? suggestion.kind : 'move',
+        status: ['pending', 'accepted', 'rejected'].includes(suggestion.status) ? suggestion.status : 'pending',
+        fromMangaId,
+        toMangaId,
+        fromPath: String(suggestion.fromPath || '').trim() || null,
+        toPath: String(suggestion.toPath || '').trim() || null,
+        score: Math.max(0, Math.min(1, Number(suggestion.score || 0))),
+        reasons: uniqueStrings(suggestion.reasons),
+        createdAt: suggestion.createdAt || identityNow,
+        decidedAt: suggestion.decidedAt || null
+      };
+    })
+    .filter(Boolean)
+    .slice(-256);
+  normalized.identityMediaIssues = (Array.isArray(normalized.identityMediaIssues) ? normalized.identityMediaIssues : [])
+    .map((issue) => {
+      if (!issue || typeof issue !== 'object') return null;
+      const mangaId = String(issue.mangaId || '').trim();
+      const chapterId = String(issue.chapterId || '').trim() || null;
+      if (!mangaId) return null;
+      return {
+        type: 'identity-media-unreadable',
+        severity: 'warning',
+        mangaId,
+        chapterId,
+        path: String(issue.path || '').trim() || null,
+        failedPath: String(issue.failedPath || '').trim() || null,
+        reason: String(issue.reason || 'media-unreadable').trim(),
+        code: String(issue.code || '').trim() || null
+      };
+    })
+    .filter(Boolean)
+    .slice(-256);
+  normalized.workGroups = normalized.workGroups && typeof normalized.workGroups === 'object' && !Array.isArray(normalized.workGroups)
+    ? Object.fromEntries(
+        Object.entries(normalized.workGroups)
+          .map(([groupId, group]) => {
+            if (!group || typeof group !== 'object' || Array.isArray(group)) return null;
+            const id = String(group.id || groupId || '').trim();
+            const editionIds = uniqueStrings(group.editionIds);
+            if (!id || editionIds.length < 2) return null;
+            const preferredEditionId = editionIds.includes(group.preferredEditionId)
+              ? group.preferredEditionId
+              : editionIds[0];
+            return [id, {
+              id,
+              title: String(group.title || '').trim(),
+              editionIds,
+              preferredEditionId,
+              favorite: Boolean(group.favorite),
+              tagIds: uniqueStrings(group.tagIds),
+              collectionIds: uniqueStrings(group.collectionIds),
+              private: Boolean(group.private),
+              createdAt: group.createdAt || identityNow,
+              updatedAt: group.updatedAt || group.createdAt || identityNow
+            }];
+          })
+          .filter(Boolean)
+      )
+    : {};
+  normalized.collections = Object.fromEntries(
+    Object.entries(normalized.collections && typeof normalized.collections === 'object' ? normalized.collections : {})
+      .map(([collectionId, collection]) => {
+        if (!collection || typeof collection !== 'object') return null;
+        const id = String(collection.id || collectionId || '').trim();
+        if (!id) return null;
+        return [id, {
+          ...collection,
+          id,
+          name: String(collection.name || 'Collection').trim(),
+          description: String(collection.description || '').trim(),
+          color: String(collection.color || '#8b5cf6').trim(),
+          mangaIds: uniqueStrings(collection.mangaIds),
+          appearance: normalizeCollectionAppearance(collection.appearance),
+          createdAt: collection.createdAt || null
+        }];
+      })
+      .filter(Boolean)
+  );
   normalized.smartCollections = Object.fromEntries(
     Object.entries({
       ...DEFAULT_STATE.smartCollections,
@@ -687,6 +1023,7 @@ function normalizeState(state) {
             icon: String(collection.icon || DEFAULT_STATE.smartCollections[collectionId]?.icon || 'layers').trim(),
             color: String(collection.color || DEFAULT_STATE.smartCollections[collectionId]?.color || '#64748b').trim(),
             description: String(collection.description || DEFAULT_STATE.smartCollections[collectionId]?.description || '').trim(),
+            appearance: normalizeCollectionAppearance(collection.appearance),
             rules: collection.rules && typeof collection.rules === 'object'
               ? collection.rules
               : (DEFAULT_STATE.smartCollections[collectionId]?.rules || { type: 'unread' })
@@ -791,56 +1128,133 @@ function splitStateForStorage(state) {
   return { rootState, userData, normalized };
 }
 
-const WRITE_DEBOUNCE_MS = Number.parseInt(process.env.SAWA_STATE_WRITE_DEBOUNCE_MS || '300', 10);
+// Regrouper les rafales interactives (progression, favoris, scroll) sur une
+// fenetre assez large pour qu aucune serialisation de segment ne concurrence
+// le retour visuel. La fermeture force toujours un flush borne a 2 secondes.
+const WRITE_DEBOUNCE_MS = Number.parseInt(process.env.SAWA_STATE_WRITE_DEBOUNCE_MS || '1200', 10);
 let pendingWriteState = null;
+let pendingWriteSegments = new Set();
 let writeTimer = null;
+const statePersistence = createAtomicJsonPersistence({ maxConcurrent: 2 });
+const scheduledSegmentJson = new Map();
+const queuedSegmentJson = new Map();
 
-function writeStateBundleToDisk(normalized) {
-  const rootState = pickStateKeys(normalized, ROOT_STATE_KEYS);
-  const userData = Object.fromEntries(
-    Object.entries(USER_DATA_KEY_GROUPS).map(([group, keys]) => [group, pickStateKeys(normalized, keys)])
-  );
+function writeStateBundleToDisk(normalized, segments = null) {
+  const selected = segments instanceof Set && segments.size > 0
+    ? segments
+    : new Set(['root', ...Object.keys(USER_DATA_KEY_GROUPS)]);
   const statePath = getStatePath();
   const storePaths = getUserDataStorePaths();
-  ensureDir(path.dirname(statePath));
-  fs.writeFileSync(statePath, JSON.stringify(rootState, null, 2), 'utf-8');
-  for (const [group, filePath] of Object.entries(storePaths)) {
-    fs.writeFileSync(filePath, JSON.stringify(userData[group] || {}, null, 2), 'utf-8');
+  const entries = [];
+  if (selected.has('root')) {
+    entries.push([statePath, JSON.stringify(pickStateKeys(normalized, ROOT_STATE_KEYS), null, 2)]);
   }
+  Object.entries(storePaths).forEach(([group, filePath]) => {
+    if (!selected.has(group)) return;
+    entries.push([filePath, JSON.stringify(pickStateKeys(normalized, USER_DATA_KEY_GROUPS[group] || []), null, 2)]);
+  });
+  let changedCount = 0;
+  entries.forEach(([filePath, serialized]) => {
+    if (
+      scheduledSegmentJson.get(filePath) === serialized
+      || queuedSegmentJson.get(filePath) === serialized
+    ) return;
+    queuedSegmentJson.set(filePath, serialized);
+    statePersistence.schedule(filePath, serialized, {
+      onSuccess: ({ content }) => {
+        if (queuedSegmentJson.get(filePath) !== content) return;
+        queuedSegmentJson.delete(filePath);
+        scheduledSegmentJson.set(filePath, content);
+      }
+    });
+    changedCount += 1;
+  });
+  return changedCount;
 }
 
-function flushStateWrites() {
+function writeStateBundleImmediately(nextState) {
+  const { normalized, rootState, userData } = splitStateForStorage(nextState);
+  const entries = [
+    [getStatePath(), rootState],
+    ...Object.entries(getUserDataStorePaths()).map(([group, filePath]) => [filePath, userData[group] || {}])
+  ];
+  entries.forEach(([filePath, value]) => {
+    const serialized = JSON.stringify(value, null, 2);
+    const temporaryPath = `${filePath}.recovery-${process.pid}-${Date.now()}`;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(temporaryPath, serialized, 'utf8');
+    fs.renameSync(temporaryPath, filePath);
+    queuedSegmentJson.delete(filePath);
+    scheduledSegmentJson.set(filePath, serialized);
+  });
+  cachedState = normalized;
+  return normalized;
+}
+
+function getBackupImportJournalPath() {
+  return path.join(getStateDir(), BACKUP_IMPORT_JOURNAL_FILE);
+}
+
+function writeBackupImportJournal(value) {
+  const journalPath = getBackupImportJournalPath();
+  const temporaryPath = `${journalPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temporaryPath, JSON.stringify(value, null, 2), 'utf8');
+  fs.renameSync(temporaryPath, journalPath);
+  return journalPath;
+}
+
+function recoverIncompleteBackupImport() {
+  const journalPath = getBackupImportJournalPath();
+  if (!fs.existsSync(journalPath)) {
+    try { recoverManagedCoverTransaction(getManagedCoverDir()); } catch (_error) {}
+    return { recovered: false };
+  }
+  const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+  if (journal.phase === 'committed') {
+    recoverManagedCoverTransaction(getManagedCoverDir(), { commit: true });
+    fs.rmSync(journalPath, { force: true });
+    return { recovered: true, committed: true };
+  }
+  recoverManagedCoverTransaction(getManagedCoverDir());
+  const backup = JSON.parse(fs.readFileSync(journal.preImportBackupPath, 'utf8'));
+  if (!backup?.state) throw new Error('Etat pre-import introuvable pour recovery.');
+  writeStateBundleImmediately(normalizeState(backup.state));
+  fs.rmSync(journalPath, { force: true });
+  return { recovered: true, committed: false };
+}
+
+async function flushStateWrites() {
   if (writeTimer) {
     clearTimeout(writeTimer);
     writeTimer = null;
   }
   const pending = pendingWriteState;
+  const segments = pendingWriteSegments;
   pendingWriteState = null;
-  if (!pending) return false;
-  try {
-    writeStateBundleToDisk(pending);
-    return true;
-  } catch (err) {
-    console.error('[storage] flushStateWrites failed:', err);
-    return false;
-  }
+  pendingWriteSegments = new Set();
+  if (pending) writeStateBundleToDisk(pending, segments);
+  const result = await statePersistence.flush();
+  if (!result.ok) console.error('[storage] flushStateWrites failed:', result.error);
+  return result.ok;
 }
 
-function scheduleStateWrite(normalized) {
+function scheduleStateWrite(normalized, segments = null) {
   pendingWriteState = normalized;
+  const selected = segments instanceof Set
+    ? segments
+    : new Set(Array.isArray(segments) ? segments : ['root', ...Object.keys(USER_DATA_KEY_GROUPS)]);
+  selected.forEach((segment) => pendingWriteSegments.add(segment));
   if (writeTimer) return;
   // Debounce must not be 0: if someone sets it to 0 we still fall through the timer so writes happen on next tick.
-  const delay = Number.isFinite(WRITE_DEBOUNCE_MS) && WRITE_DEBOUNCE_MS >= 0 ? WRITE_DEBOUNCE_MS : 300;
+  const delay = Number.isFinite(WRITE_DEBOUNCE_MS) && WRITE_DEBOUNCE_MS >= 0 ? WRITE_DEBOUNCE_MS : 1200;
   writeTimer = setTimeout(() => {
     writeTimer = null;
     const pending = pendingWriteState;
+    const pendingSegments = pendingWriteSegments;
     pendingWriteState = null;
+    pendingWriteSegments = new Set();
     if (!pending) return;
-    try {
-      writeStateBundleToDisk(pending);
-    } catch (err) {
-      console.error('[storage] scheduled state write failed:', err);
-    }
+    writeStateBundleToDisk(pending, pendingSegments);
   }, delay);
   // Ensure the timer does not keep the event loop alive past normal shutdown.
   if (typeof writeTimer.unref === 'function') writeTimer.unref();
@@ -867,6 +1281,13 @@ function loadSplitState() {
     if (!segment || typeof segment !== 'object' || Array.isArray(segment)) continue;
     Object.assign(merged, pickStateKeys(segment, USER_DATA_KEY_GROUPS[group] || []));
   }
+  const primed = splitStateForStorage(merged);
+  scheduledSegmentJson.set(statePath, JSON.stringify(primed.rootState, null, 2));
+  queuedSegmentJson.delete(statePath);
+  Object.entries(storePaths).forEach(([group, filePath]) => {
+    scheduledSegmentJson.set(filePath, JSON.stringify(primed.userData[group] || {}, null, 2));
+    queuedSegmentJson.delete(filePath);
+  });
   return merged;
 }
 
@@ -888,6 +1309,11 @@ function migrateFromV1(v1State) {
 
 function loadState() {
   if (cachedState) return cachedState;
+  try {
+    recoverIncompleteBackupImport();
+  } catch (error) {
+    console.error('[storage] backup import recovery failed:', error?.message || error);
+  }
   const splitState = loadSplitState();
   if (splitState) {
     try {
@@ -940,13 +1366,45 @@ function loadState() {
 }
 
 function saveState(nextState) {
+  if (runtimeStateReadOnly) {
+    cachedState = normalizeState(nextState);
+    return cachedState;
+  }
   return writeSplitStateFiles(nextState);
+}
+
+function activateRuntimeStateOverride(state, options = {}) {
+  cachedState = normalizeState(state || {});
+  runtimeStateReadOnly = options.readOnly !== false;
+  return cachedState;
 }
 
 function updateState(updater) {
   const current = loadState();
   const next = updater(structuredClone(current));
   return saveState(next);
+}
+
+function updateStateSegments(selection = {}, updater) {
+  const current = loadState();
+  const allowedBySegment = { root: ROOT_STATE_KEYS, ...USER_DATA_KEY_GROUPS };
+  const selectedEntries = Object.entries(selection || {}).filter(([segment]) => allowedBySegment[segment]);
+  if (selectedEntries.length === 0) return updateState(updater);
+
+  const next = { ...current };
+  selectedEntries.forEach(([segment, requestedKeys]) => {
+    const allowed = new Set(allowedBySegment[segment]);
+    const keys = Array.isArray(requestedKeys) && requestedKeys.length > 0
+      ? requestedKeys.filter((key) => allowed.has(key))
+      : [...allowed];
+    keys.forEach((key) => {
+      next[key] = structuredClone(current[key]);
+    });
+  });
+  const updated = updater(next) || next;
+  cachedState = updated;
+  scheduleStateWrite(updated, selectedEntries.map(([segment]) => segment));
+  return updated;
 }
 
 function createBackup(label = '') {
@@ -957,7 +1415,7 @@ function createBackup(label = '') {
   const backupPath = path.join(getBackupDir(), fileName);
   const manifest = {
     app: 'sawa-manga-library',
-    version: '3.0.0',
+    version: '4.1.0',
     storageVersion: STORAGE_VERSION,
     stateVersion: STATE_VERSION,
     scanIndexVersion: SCAN_INDEX_VERSION,
@@ -984,16 +1442,134 @@ function createBackup(label = '') {
   return { path: backupPath, manifest };
 }
 
+async function exportBackup(targetPath, label = '') {
+  return runHeavyIoTask('backup-export', {
+    targetPath,
+    state: loadState(),
+    managedCoverDir: getManagedCoverDir(),
+    appVersion: '4.1.0',
+    storageVersion: STORAGE_VERSION,
+    stateVersion: STATE_VERSION,
+    label
+  });
+}
+
+async function rollbackBackupImport(options = {}) {
+  const errors = [];
+  let coversRolledBack = true;
+  let stateRolledBack = false;
+  if (options.coverTransaction) {
+    try {
+      await options.coverTransaction.rollback();
+    } catch (error) {
+      coversRolledBack = false;
+      errors.push(`couvertures: ${error?.message || String(error)}`);
+    }
+  }
+
+  try {
+    options.saveStateFn(options.previousState);
+    const flushed = await options.flushStateFn();
+    stateRolledBack = flushed === true;
+    if (!stateRolledBack) errors.push('etat: la reecriture de restauration a echoue');
+  } catch (error) {
+    errors.push(`etat: ${error?.message || String(error)}`);
+  }
+
+  return {
+    rolledBack: coversRolledBack && stateRolledBack,
+    coversRolledBack,
+    stateRolledBack,
+    rollbackError: errors.length > 0 ? errors.join('; ') : null
+  };
+}
+
+function serializeBackupImport(operation) {
+  const current = backupImportTail.then(() => operation());
+  backupImportTail = current.catch(() => {});
+  return current;
+}
+
+async function importBackupTransaction(backupFilePath) {
+  const staged = await runHeavyIoTask('backup-stage', { filePath: backupFilePath });
+  const previous = structuredClone(loadState());
+  const preImport = createBackup('pre-import-auto');
+  let coverTransaction = null;
+  let transactionCommitted = false;
+  writeBackupImportJournal({
+    version: 1,
+    phase: 'prepared',
+    preImportBackupPath: preImport.path,
+    createdAt: new Date().toISOString()
+  });
+  try {
+    const imported = normalizeState(staged.state);
+    saveState(imported);
+    const persisted = await flushStateWrites();
+    if (!persisted) throw new Error('La sauvegarde a ete validee mais son etat n a pas pu etre ecrit sur disque.');
+    if (staged.stagedCoverDir) {
+      const managedCoverDir = getManagedCoverDir();
+      const transaction = await runHeavyIoTask('covers-replace', {
+        stagedCoverDir: staged.stagedCoverDir,
+        managedCoverDir
+      });
+      coverTransaction = {
+        ...transaction,
+        rollback: () => runHeavyIoTask('covers-rollback', { managedCoverDir }),
+        commit: () => runHeavyIoTask('covers-commit', { managedCoverDir })
+      };
+    }
+    writeBackupImportJournal({
+      version: 1,
+      phase: 'committed',
+      preImportBackupPath: preImport.path,
+      createdAt: new Date().toISOString()
+    });
+    transactionCommitted = true;
+    await coverTransaction?.commit();
+    fs.rmSync(getBackupImportJournalPath(), { force: true });
+    return {
+      ok: true,
+      restored: true,
+      legacy: staged.legacy,
+      manifest: staged.manifest,
+      preImportBackupPath: preImport.path,
+      coversRestored: Boolean(coverTransaction?.changed)
+    };
+  } catch (error) {
+    if (transactionCommitted) {
+      return {
+        ok: true,
+        restored: true,
+        cleanupPending: true,
+        error: `Import applique; nettoyage transactionnel differe: ${error?.message || error}`,
+        preImportBackupPath: preImport.path
+      };
+    }
+    const rollback = await rollbackBackupImport({
+      coverTransaction,
+      previousState: previous,
+      saveStateFn: saveState,
+      flushStateFn: flushStateWrites
+    });
+    if (rollback.rolledBack) fs.rmSync(getBackupImportJournalPath(), { force: true });
+    const primaryError = error?.message || 'Import de sauvegarde impossible.';
+    return {
+      ok: false,
+      restored: false,
+      ...rollback,
+      error: rollback.rolledBack
+        ? primaryError
+        : `${primaryError} Restauration incomplete: ${rollback.rollbackError || 'cause inconnue'}.`,
+      preImportBackupPath: preImport.path
+    };
+  } finally {
+    await runHeavyIoTask('backup-cleanup', { staged }).catch(() => cleanupStagedBackup(staged));
+  }
+}
+
 function importBackup(backupFilePath) {
-  const raw = fs.readFileSync(backupFilePath, 'utf-8');
-  const backup = JSON.parse(raw);
-  if (!backup.manifest || !backup.state) throw new Error('Invalid backup file format');
-  createBackup('pre-import-auto');
-  const imported = normalizeState(backup.state);
-  saveState(imported);
-  // Force the imported state to disk before returning so callers observe a durable result.
-  flushStateWrites();
-  return { manifest: backup.manifest, restored: true };
+  return serializeBackupImport(() => importBackupTransaction(backupFilePath));
 }
 
 function listBackups() {
@@ -1034,7 +1610,7 @@ function clearDerivedArtifacts() {
 }
 
 function createTag(name, color = '#8b5cf6') {
-  return updateState((state) => {
+  return updateStateSegments({ organization: ['tags'] }, (state) => {
     const id = `tag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     state.tags[id] = { id, name: name.trim(), color, createdAt: new Date().toISOString() };
     return state;
@@ -1042,7 +1618,7 @@ function createTag(name, color = '#8b5cf6') {
 }
 
 function deleteTag(tagId) {
-  return updateState((state) => {
+  return updateStateSegments({ organization: ['tags', 'mangaTags', 'mangaTagMeta'] }, (state) => {
     delete state.tags[tagId];
     for (const mangaId of Object.keys(state.mangaTags)) {
       state.mangaTags[mangaId] = (state.mangaTags[mangaId] || []).filter((id) => id !== tagId);
@@ -1060,93 +1636,147 @@ function deleteTag(tagId) {
   });
 }
 
+function getWorkEditionIds(state, mangaId) {
+  const normalizedId = String(mangaId || '').trim();
+  const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(normalizedId));
+  return group ? [...group.editionIds] : [normalizedId];
+}
+
 function setMangaTags(mangaId, tagIds, tagMeta = null) {
-  return updateState((state) => {
+  return updateStateSegments({ organization: ['mangaTags', 'mangaTagMeta'], identity: ['workGroups'] }, (state) => {
     const nextTagIds = uniqueStrings(tagIds).filter((tagId) => state.tags[tagId]);
-    if (nextTagIds.length === 0) {
-      delete state.mangaTags[mangaId];
-      delete state.mangaTagMeta[mangaId];
-      return state;
+    for (const editionId of getWorkEditionIds(state, mangaId)) {
+      if (nextTagIds.length === 0) {
+        delete state.mangaTags[editionId];
+        delete state.mangaTagMeta[editionId];
+        continue;
+      }
+      state.mangaTags[editionId] = nextTagIds;
+      const prevMeta = state.mangaTagMeta?.[editionId] && typeof state.mangaTagMeta[editionId] === 'object' ? state.mangaTagMeta[editionId] : {};
+      const nextMeta = {};
+      for (const tagId of nextTagIds) {
+        const metaPatch = tagMeta?.[tagId] && typeof tagMeta[tagId] === 'object' ? tagMeta[tagId] : null;
+        const mergedMeta = { ...(prevMeta[tagId] || {}), ...(metaPatch || {}) };
+        if (Object.keys(mergedMeta).length > 0) nextMeta[tagId] = mergedMeta;
+      }
+      if (Object.keys(nextMeta).length > 0) state.mangaTagMeta[editionId] = nextMeta;
+      else delete state.mangaTagMeta[editionId];
     }
-
-    state.mangaTags[mangaId] = nextTagIds;
-    const prevMeta = state.mangaTagMeta?.[mangaId] && typeof state.mangaTagMeta[mangaId] === 'object' ? state.mangaTagMeta[mangaId] : {};
-    const nextMeta = {};
-
-    for (const tagId of nextTagIds) {
-      const metaPatch = tagMeta?.[tagId] && typeof tagMeta[tagId] === 'object' ? tagMeta[tagId] : null;
-      const mergedMeta = { ...(prevMeta[tagId] || {}), ...(metaPatch || {}) };
-      if (Object.keys(mergedMeta).length > 0) nextMeta[tagId] = mergedMeta;
-    }
-
-    if (Object.keys(nextMeta).length > 0) state.mangaTagMeta[mangaId] = nextMeta;
-    else delete state.mangaTagMeta[mangaId];
+    const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+    if (group) group.tagIds = nextTagIds;
     return state;
   });
 }
 
 function addTagToManga(mangaId, tagId, meta = null) {
-  return updateState((state) => {
-    const current = state.mangaTags[mangaId] || [];
-    if (!current.includes(tagId)) state.mangaTags[mangaId] = [...current, tagId];
-    if (meta && typeof meta === 'object' && Object.keys(meta).length > 0) {
-      state.mangaTagMeta[mangaId] = state.mangaTagMeta[mangaId] && typeof state.mangaTagMeta[mangaId] === 'object' ? state.mangaTagMeta[mangaId] : {};
-      state.mangaTagMeta[mangaId][tagId] = { ...(state.mangaTagMeta[mangaId][tagId] || {}), ...meta };
+  return updateStateSegments({ organization: ['mangaTags', 'mangaTagMeta'], identity: ['workGroups'] }, (state) => {
+    for (const editionId of getWorkEditionIds(state, mangaId)) {
+      const current = state.mangaTags[editionId] || [];
+      if (!current.includes(tagId)) state.mangaTags[editionId] = [...current, tagId];
+      if (meta && typeof meta === 'object' && Object.keys(meta).length > 0) {
+        state.mangaTagMeta[editionId] = state.mangaTagMeta[editionId] && typeof state.mangaTagMeta[editionId] === 'object' ? state.mangaTagMeta[editionId] : {};
+        state.mangaTagMeta[editionId][tagId] = { ...(state.mangaTagMeta[editionId][tagId] || {}), ...meta };
+      }
     }
+    const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+    if (group) group.tagIds = uniqueStrings([...(group.tagIds || []), tagId]);
     return state;
   });
 }
 
 function removeTagFromManga(mangaId, tagId) {
-  return updateState((state) => {
-    state.mangaTags[mangaId] = (state.mangaTags[mangaId] || []).filter((id) => id !== tagId);
-    if (state.mangaTags[mangaId].length === 0) {
-      delete state.mangaTags[mangaId];
-      delete state.mangaTagMeta[mangaId];
-      return state;
+  return updateStateSegments({ organization: ['mangaTags', 'mangaTagMeta'], identity: ['workGroups'] }, (state) => {
+    for (const editionId of getWorkEditionIds(state, mangaId)) {
+      state.mangaTags[editionId] = (state.mangaTags[editionId] || []).filter((id) => id !== tagId);
+      if (state.mangaTags[editionId].length === 0) {
+        delete state.mangaTags[editionId];
+        delete state.mangaTagMeta[editionId];
+        continue;
+      }
+      if (state.mangaTagMeta?.[editionId]) {
+        delete state.mangaTagMeta[editionId][tagId];
+        if (Object.keys(state.mangaTagMeta[editionId]).length === 0) delete state.mangaTagMeta[editionId];
+      }
     }
-    if (state.mangaTagMeta?.[mangaId]) {
-      delete state.mangaTagMeta[mangaId][tagId];
-      if (Object.keys(state.mangaTagMeta[mangaId]).length === 0) delete state.mangaTagMeta[mangaId];
-    }
+    const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+    if (group) group.tagIds = (group.tagIds || []).filter((id) => id !== tagId);
     return state;
   });
 }
 
-function createCollection(name, description = '', color = '#8b5cf6') {
-  return updateState((state) => {
+function createCollection(name, description = '', color = '#8b5cf6', appearance = null) {
+  return updateStateSegments({ organization: ['collections'] }, (state) => {
     const id = `col-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    state.collections[id] = { id, name: name.trim(), description, color, mangaIds: [], createdAt: new Date().toISOString() };
+    state.collections[id] = {
+      id,
+      name: name.trim(),
+      description,
+      color,
+      mangaIds: [],
+      appearance: normalizeCollectionAppearance(appearance),
+      createdAt: new Date().toISOString()
+    };
     return state;
   });
 }
 
 function deleteCollection(collectionId) {
-  return updateState((state) => {
+  return updateStateSegments({ organization: ['collections'] }, (state) => {
     delete state.collections[collectionId];
     return state;
   });
 }
 
+function sanitizeCollectionPatch(patch) {
+  const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+  const next = {};
+  if (Object.prototype.hasOwnProperty.call(source, 'name')) {
+    const name = String(source.name || '').trim();
+    if (name) next.name = name;
+  }
+  if (Object.prototype.hasOwnProperty.call(source, 'description')) {
+    next.description = String(source.description || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(source, 'color')) {
+    const color = String(source.color || '').trim();
+    if (/^#[0-9a-f]{6}$/i.test(color)) next.color = color;
+  }
+  if (Object.prototype.hasOwnProperty.call(source, 'appearance')) {
+    next.appearance = normalizeCollectionAppearance(source.appearance);
+  }
+  return next;
+}
+
 function updateCollection(collectionId, patch) {
-  return updateState((state) => {
-    if (state.collections[collectionId]) state.collections[collectionId] = { ...state.collections[collectionId], ...patch };
+  return updateStateSegments({ organization: ['collections'] }, (state) => {
+    if (state.collections[collectionId]) {
+      state.collections[collectionId] = {
+        ...state.collections[collectionId],
+        ...sanitizeCollectionPatch(patch)
+      };
+    }
     return state;
   });
 }
 
 function addMangaToCollection(collectionId, mangaId) {
-  return updateState((state) => {
+  return updateStateSegments({ organization: ['collections'], identity: ['workGroups'] }, (state) => {
     const collection = state.collections[collectionId];
-    if (collection && !collection.mangaIds.includes(mangaId)) collection.mangaIds.push(mangaId);
+    const editionIds = getWorkEditionIds(state, mangaId);
+    if (collection) collection.mangaIds = uniqueStrings([...(collection.mangaIds || []), ...editionIds]);
+    const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+    if (group) group.collectionIds = uniqueStrings([...(group.collectionIds || []), collectionId]);
     return state;
   });
 }
 
 function removeMangaFromCollection(collectionId, mangaId) {
-  return updateState((state) => {
+  return updateStateSegments({ organization: ['collections'], identity: ['workGroups'] }, (state) => {
     const collection = state.collections[collectionId];
-    if (collection) collection.mangaIds = collection.mangaIds.filter((id) => id !== mangaId);
+    const editionIds = new Set(getWorkEditionIds(state, mangaId));
+    if (collection) collection.mangaIds = collection.mangaIds.filter((id) => !editionIds.has(id));
+    const group = Object.values(state.workGroups || {}).find((entry) => (entry.editionIds || []).includes(mangaId));
+    if (group) group.collectionIds = (group.collectionIds || []).filter((id) => id !== collectionId);
     return state;
   });
 }
@@ -1158,11 +1788,15 @@ module.exports = {
   QUEUE_VERSION,
   METADATA_VERSION,
   SPLIT_STORAGE_VERSION,
+  SEARCH_PRIVACY_VERSION,
   DEFAULT_STATE,
   normalizeState,
+  normalizePersistedSessionPayload,
   loadState,
   saveState,
+  activateRuntimeStateOverride,
   updateState,
+  updateStateSegments,
   flushStateWrites,
   getUserDataPath,
   getStateDir,
@@ -1174,11 +1808,17 @@ module.exports = {
   getDerivedDbPath,
   getCacheDir,
   getBackupDir,
+  getManagedCoverDir,
+  getBackupImportJournalPath,
   getThumbnailDir,
   getCbzCacheDir,
   clearDerivedArtifacts,
   createBackup,
+  exportBackup,
   importBackup,
+  serializeBackupImport,
+  recoverIncompleteBackupImport,
+  rollbackBackupImport,
   listBackups,
   migrateFromV1,
   createTag,
@@ -1188,6 +1828,7 @@ module.exports = {
   removeTagFromManga,
   createCollection,
   deleteCollection,
+  sanitizeCollectionPatch,
   updateCollection,
   addMangaToCollection,
   removeMangaFromCollection

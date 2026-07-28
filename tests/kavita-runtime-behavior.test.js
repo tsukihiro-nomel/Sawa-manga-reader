@@ -34,6 +34,34 @@ describe('Kavita runtime behavior', () => {
     expect(measureVisibleWebtoonPage(root)).toBe(1);
   });
 
+  it('uses the center element fast path before scanning every Webtoon page', async () => {
+    const { measureVisibleWebtoonPage } = await loadModule('../src/interfaces/kavita/webtoonMeasurement.js');
+    const pageNode = {
+      dataset: { kvPageIndex: '42' },
+      isConnected: true
+    };
+    const centeredChild = {
+      closest: vi.fn(() => pageNode)
+    };
+    const querySelectorAll = vi.fn(() => {
+      throw new Error('fallback scan should not run for the fast path');
+    });
+    const elementFromPoint = vi.fn(() => centeredChild);
+    const root = {
+      isConnected: true,
+      clientHeight: 600,
+      clientWidth: 800,
+      ownerDocument: { elementFromPoint },
+      contains: vi.fn((node) => node === pageNode || node === centeredChild),
+      getBoundingClientRect: () => ({ top: 100, left: 20, width: 800, height: 600 }),
+      querySelectorAll
+    };
+
+    expect(measureVisibleWebtoonPage(root)).toBe(42);
+    expect(elementFromPoint).toHaveBeenCalledWith(420, 400);
+    expect(querySelectorAll).not.toHaveBeenCalled();
+  });
+
   it('ignores missing, detached and zero-sized Webtoon roots or pages', async () => {
     const { measureVisibleWebtoonPage } = await loadModule('../src/interfaces/kavita/webtoonMeasurement.js');
     const detachedRoot = {

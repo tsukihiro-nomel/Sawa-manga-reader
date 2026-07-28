@@ -78,4 +78,112 @@ describe('ReaderSessionStore', () => {
     expect(result.errors).toHaveLength(1);
     expect(commitProgress).toHaveBeenCalledWith(payload, { tabId: 'tab-3', incognito: false });
   });
+
+  it('reports timer persistence failures with a retry instead of swallowing them', async () => {
+    const onPersistenceError = vi.fn();
+    const persistProgress = vi.fn()
+      .mockRejectedValueOnce(new Error('disk unavailable'))
+      .mockResolvedValueOnce({ ok: true, revision: 3 });
+    const store = createReaderSessionStore({
+      persistProgress,
+      onPersistenceError,
+      progressDelay: 100
+    });
+
+    store.stageProgress({ chapterId: 'chapter-retry', pageIndex: 4 });
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(onPersistenceError).toHaveBeenCalledTimes(1);
+    const issue = onPersistenceError.mock.calls[0][0];
+    expect(issue).toMatchObject({ kind: 'progress', revision: 1 });
+    await expect(issue.retry()).resolves.toMatchObject({ ok: true });
+    expect(persistProgress).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a superseded timer failure after newer progress has been staged', async () => {
+    const onPersistenceError = vi.fn();
+    const first = deferred();
+    const persistProgress = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce({ ok: true, revision: 4 });
+    const store = createReaderSessionStore({
+      persistProgress,
+      onPersistenceError,
+      progressDelay: 100
+    });
+
+    store.stageProgress({ chapterId: 'chapter-1', pageIndex: 1 });
+    await vi.advanceTimersByTimeAsync(100);
+    store.stageProgress({ chapterId: 'chapter-1', pageIndex: 2 });
+    first.reject(new Error('old write failed'));
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(onPersistenceError).not.toHaveBeenCalled();
+    expect(persistProgress).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats an explicit MutationResult failure as a persistence error', async () => {
+    const onPersistenceError = vi.fn();
+    const store = createReaderSessionStore({
+      persistSettings: vi.fn().mockResolvedValue({ ok: false, error: 'read only' }),
+      onPersistenceError,
+      settingsDelay: 100
+    });
+
+    store.stageSettings({ mode: 'webtoon' });
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(onPersistenceError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'settings',
+      error: expect.objectContaining({ message: 'read only' })
+    }));
+  });
+
+  it.each([
+    ['progress', 'stageProgress', 'persistProgress', { chapterId: 'chapter-1', pageIndex: 1 }, { chapterId: 'chapter-1', pageIndex: 2 }],
+    ['settings', 'stageSettings', 'persistSettings', { mode: 'single' }, { mode: 'webtoon' }]
+  ])('clears stale %s notices when a newer revision succeeds', async (
+    kind,
+    stageMethod,
+    persistOption,
+    firstPayload,
+    secondPayload
+  ) => {
+    const notices = [];
+    const persist = vi.fn()
+      .mockRejectedValueOnce(new Error('r1 failed'))
+      .mockResolvedValueOnce({ ok: true, revision: 2 });
+    const store = createReaderSessionStore({
+      [persistOption]: persist,
+      progressDelay: 100,
+      settingsDelay: 100,
+      onPersistenceError: (failure) => {
+        notices.push({ kind: failure.kind, revision: failure.revision });
+      },
+      onPersistenceSuccess: (success) => {
+        for (let index = notices.length - 1; index >= 0; index -= 1) {
+          if (notices[index].kind === success.kind) notices.splice(index, 1);
+        }
+      }
+    });
+
+    store[stageMethod](firstPayload);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(notices).toEqual([{ kind, revision: 1 }]);
+
+    store[stageMethod](secondPayload);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(notices).toEqual([]);
+  });
 });
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((ok, fail) => {
+    resolve = ok;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}

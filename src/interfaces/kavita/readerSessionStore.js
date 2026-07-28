@@ -2,11 +2,20 @@ function resolved() {
   return Promise.resolve();
 }
 
+function ensureSuccessful(result) {
+  if (result?.ok === false) {
+    throw new Error(String(result.error || 'Ecriture locale impossible.'));
+  }
+  return result;
+}
+
 export function createReaderSessionStore(options = {}) {
   const persistProgress = options.persistProgress || resolved;
   const commitProgress = options.commitProgress || resolved;
   const persistSettings = options.persistSettings || resolved;
   const commitSettings = options.commitSettings || resolved;
+  const onPersistenceError = options.onPersistenceError || (() => {});
+  const onPersistenceSuccess = options.onPersistenceSuccess || (() => {});
   const progressDelay = Number.isFinite(options.progressDelay) ? options.progressDelay : 450;
   const settingsDelay = Number.isFinite(options.settingsDelay) ? options.settingsDelay : 500;
 
@@ -25,15 +34,37 @@ export function createReaderSessionStore(options = {}) {
   async function persistLatestProgress(revision = progressRevision) {
     if (!latestProgress || progressMeta.incognito || !progressNeedsPersist) return;
     const payload = latestProgress;
-    await persistProgress(payload);
-    if (revision === progressRevision) progressNeedsPersist = false;
+    ensureSuccessful(await persistProgress(payload));
+    if (revision === progressRevision) {
+      progressNeedsPersist = false;
+      onPersistenceSuccess({ kind: 'progress', revision });
+    }
   }
 
   async function persistLatestSettings(revision = settingsRevision) {
     if (!latestSettings || !settingsNeedPersist) return;
     const payload = latestSettings;
-    await persistSettings(payload);
-    if (revision === settingsRevision) settingsNeedPersist = false;
+    ensureSuccessful(await persistSettings(payload));
+    if (revision === settingsRevision) {
+      settingsNeedPersist = false;
+      onPersistenceSuccess({ kind: 'settings', revision });
+    }
+  }
+
+  function reportPersistenceError(kind, error, payload, revision) {
+    const currentRevision = kind === 'progress' ? progressRevision : settingsRevision;
+    if (revision !== currentRevision) return;
+    const retry = async () => {
+      try {
+        if (kind === 'progress') await persistLatestProgress(revision);
+        else await persistLatestSettings(revision);
+        return { ok: true };
+      } catch (retryError) {
+        reportPersistenceError(kind, retryError, payload, revision);
+        return { ok: false, error: retryError };
+      }
+    };
+    onPersistenceError({ kind, error, payload, revision, retry });
   }
 
   function stageProgress(payload, meta = {}) {
@@ -51,7 +82,9 @@ export function createReaderSessionStore(options = {}) {
     if (!progressMeta.incognito) {
       progressTimer = setTimeout(() => {
         progressTimer = null;
-        void persistLatestProgress(revision).catch(() => {});
+        void persistLatestProgress(revision).catch((error) => {
+          reportPersistenceError('progress', error, latestProgress, revision);
+        });
       }, progressDelay);
     }
   }
@@ -65,7 +98,9 @@ export function createReaderSessionStore(options = {}) {
     const revision = settingsRevision;
     settingsTimer = setTimeout(() => {
       settingsTimer = null;
-      void persistLatestSettings(revision).catch(() => {});
+      void persistLatestSettings(revision).catch((error) => {
+        reportPersistenceError('settings', error, latestSettings, revision);
+      });
     }, settingsDelay);
   }
 
@@ -79,11 +114,13 @@ export function createReaderSessionStore(options = {}) {
       await persistLatestProgress();
     } catch (error) {
       errors.push(error);
+      reportPersistenceError('progress', error, latestProgress, progressRevision);
     }
     try {
       await persistLatestSettings();
     } catch (error) {
       errors.push(error);
+      reportPersistenceError('settings', error, latestSettings, settingsRevision);
     }
 
     if (commit && latestProgress && progressNeedsCommit) {

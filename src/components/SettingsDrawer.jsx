@@ -146,6 +146,7 @@ export default function SettingsDrawer({
   onRemoveBackground,
   onClearCache,
   onForceRescan,
+  onRetrySync,
   onRunDeepScan,
   onRebuildDerivedData,
   onUpdateVaultPrefs,
@@ -162,24 +163,38 @@ export default function SettingsDrawer({
   const experimental = ui.experimental || {};
   const availableSidebarSections = SIDEBAR_SECTION_OPTIONS.filter((section) => showSources || section.id !== 'sources');
   const hiddenSidebarSections = sidebarHiddenSections && typeof sidebarHiddenSections === 'object' ? sidebarHiddenSections : {};
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupFeedback, setBackupFeedback] = useState(null);
   const visibleSidebarSections = (
     Array.isArray(sidebarSections) && sidebarSections.length > 0
       ? sidebarSections.filter((sectionId) => availableSidebarSections.some((section) => section.id === sectionId) && !hiddenSidebarSections[sectionId])
       : availableSidebarSections.map((section) => section.id)
   );
   async function handleExportSawa() {
+    setBackupBusy(true);
     try {
-      await window.mangaAPI.exportBackup();
+      const result = await window.mangaAPI.exportBackup();
+      setBackupFeedback(result?.exported
+        ? { ok: true, message: `Sauvegarde exportee: ${result.path}`, details: result }
+        : { ok: false, message: result?.error || 'Export annule ou impossible.', details: result, retry: 'export' });
     } catch (err) {
-      console.error('Export failed:', err);
+      setBackupFeedback({ ok: false, message: err?.message || 'Export impossible.', details: { error: err?.message }, retry: 'export' });
+    } finally {
+      setBackupBusy(false);
     }
   }
 
   async function handleImportSawa() {
+    setBackupBusy(true);
     try {
-      await window.mangaAPI.importBackup();
+      const result = await window.mangaAPI.importBackup();
+      setBackupFeedback(result?.restored
+        ? { ok: true, message: `Sauvegarde restauree${result.legacy ? ' (format historique)' : ''}.`, details: result }
+        : { ok: false, message: result?.error || 'Import annule ou impossible.', details: result, retry: 'import' });
     } catch (err) {
-      console.error('Import failed:', err);
+      setBackupFeedback({ ok: false, message: err?.message || 'Import impossible.', details: { error: err?.message }, retry: 'import' });
+    } finally {
+      setBackupBusy(false);
     }
   }
 
@@ -298,6 +313,30 @@ export default function SettingsDrawer({
                 <button className={ui.cardSize === 'compact' ? 'active' : ''} onClick={() => onChange({ cardSize: 'compact' })}>Compact</button>
                 <button className={ui.cardSize === 'comfortable' ? 'active' : ''} onClick={() => onChange({ cardSize: 'comfortable' })}>Confort</button>
                 <button className={ui.cardSize === 'large' ? 'active' : ''} onClick={() => onChange({ cardSize: 'large' })}>Large</button>
+              </div>
+            </div>
+            <div className="settings-subsection">
+              <h5>Taille des chapitres</h5>
+              <div className="segmented-control segmented-control-full">
+                <button className={ui.chapterCardSize === 'compact' ? 'active' : ''} onClick={() => onChange({ chapterCardSize: 'compact' })}>Compact</button>
+                <button className={ui.chapterCardSize === 'comfortable' ? 'active' : ''} onClick={() => onChange({ chapterCardSize: 'comfortable' })}>Confort</button>
+                <button className={ui.chapterCardSize === 'large' ? 'active' : ''} onClick={() => onChange({ chapterCardSize: 'large' })}>Large</button>
+              </div>
+            </div>
+            <div className="settings-subsection">
+              <h5>Taille des aperçus de pages</h5>
+              <div className="segmented-control segmented-control-full">
+                <button className={ui.pagePreviewSize === 'compact' ? 'active' : ''} onClick={() => onChange({ pagePreviewSize: 'compact' })}>Compact</button>
+                <button className={ui.pagePreviewSize === 'comfortable' ? 'active' : ''} onClick={() => onChange({ pagePreviewSize: 'comfortable' })}>Confort</button>
+                <button className={ui.pagePreviewSize === 'large' ? 'active' : ''} onClick={() => onChange({ pagePreviewSize: 'large' })}>Large</button>
+              </div>
+            </div>
+            <div className="settings-subsection">
+              <h5>Qualité des aperçus</h5>
+              <div className="segmented-control segmented-control-full">
+                <button className={ui.previewQuality === 'economy' ? 'active' : ''} onClick={() => onChange({ previewQuality: 'economy' })}>Économe</button>
+                <button className={ui.previewQuality === 'balanced' ? 'active' : ''} onClick={() => onChange({ previewQuality: 'balanced' })}>Auto</button>
+                <button className={ui.previewQuality === 'high' ? 'active' : ''} onClick={() => onChange({ previewQuality: 'high' })}>Net</button>
               </div>
             </div>
           </section>
@@ -596,6 +635,15 @@ export default function SettingsDrawer({
                 : 'Le scheduler garde un statut compact: a jour, mise a jour ou attention.'}
             </div>
           </div>
+          <label className="settings-toggle">
+            <span>Diagnostic de reactivite</span>
+            <input
+              type="checkbox"
+              checked={Boolean(experimental.performanceDiagnostics)}
+              onChange={(event) => handleExperimentalPatch({ performanceDiagnostics: event.target.checked })}
+            />
+          </label>
+          <div className="settings-note">Conserve localement les 200 dernieres mesures de latence, sans chemins de fichiers.</div>
         </div>
 
         <div className="settings-section">
@@ -679,20 +727,41 @@ export default function SettingsDrawer({
         <div className="settings-section">
           <div className="settings-section-heading">
             <h4><HardDriveIcon size={16} /> Donnees & Sauvegarde</h4>
-            <span>Exporte ou importe tes donnees au format .sawa pour les transferer entre appareils.</span>
+            <span>Exporte ou importe tes donnees au format .sawa-backup pour les transferer entre appareils.</span>
           </div>
 
           <div className="settings-grid-two">
-            <button className="ghost-button" onClick={handleExportSawa}>
-              <DownloadIcon size={16} /> Exporter (.sawa)
+            <button className="ghost-button" disabled={backupBusy} onClick={handleExportSawa}>
+              <DownloadIcon size={16} /> Exporter (.sawa-backup)
             </button>
-            <button className="ghost-button" onClick={handleImportSawa}>
-              <UploadIcon size={16} /> Importer (.sawa)
+            <button className="ghost-button" disabled={backupBusy} onClick={handleImportSawa}>
+              <UploadIcon size={16} /> Importer
             </button>
           </div>
+          {backupFeedback ? (
+            <div className="settings-note" role="status">
+              <strong>{backupFeedback.ok ? 'Succes' : 'Attention'}:</strong> {backupFeedback.message}
+              {!backupFeedback.ok && backupFeedback.retry ? (
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={backupFeedback.retry === 'export' ? handleExportSawa : handleImportSawa}
+                >
+                  Reessayer
+                </button>
+              ) : null}
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(JSON.stringify(backupFeedback.details || {}, null, 2))}
+              >
+                Copier les details
+              </button>
+            </div>
+          ) : null}
           <div className="settings-note">
-            Le fichier .sawa contient ta progression, tes favoris, tes tags, tes collections et tes parametres.
-            Les fichiers manga eux-memes ne sont pas inclus.
+            Le paquet contient ta progression, tes favoris, tes tags, tes collections, tes parametres et les couvertures gerees.
+            Les fichiers manga eux-memes ne sont pas inclus. Les anciens fichiers JSON restent importables.
           </div>
         </div>
 
@@ -716,12 +785,17 @@ export default function SettingsDrawer({
             </button>
           </div>
           {syncStatus?.detail ? <div className="settings-note">{syncStatus.detail}</div> : null}
+          {(syncStatus?.state === 'retry-required' || syncStatus?.retryable) ? (
+            <button className="primary-button" onClick={onRetrySync}>
+              <RefreshIcon size={16} /> Relancer la synchronisation
+            </button>
+          ) : null}
         </div>
 
         <div className="settings-section">
           <div className="settings-section-heading"><h4>A propos</h4></div>
           <div className="settings-note">
-            <strong>Sawa Manga Library v4.0.0</strong><br />
+            <strong>Sawa Manga Library v4.1.0</strong><br />
             Bibliotheque manga locale, premium, intelligente et entierement hors ligne.
           </div>
         </div>

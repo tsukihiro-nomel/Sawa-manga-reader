@@ -12,3 +12,10 @@ __appImage-x64/
 *.asar
 *.zip
 *.tar.gz
+
+# Local agent tooling and generated installer UI
+.agents/
+.claude/
+_bmad/
+installer/dist-ui/
+.sawa5-staging/

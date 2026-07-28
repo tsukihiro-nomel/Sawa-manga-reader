@@ -112,6 +112,52 @@ function getScanEntries(scanIndex) {
   return [];
 }
 
+const SCAN_ENTRY_COMPARISON_FIELDS = [
+  'type',
+  'legacyId',
+  'contentId',
+  'locationId',
+  'path',
+  'containerType',
+  'chapterCount',
+  'pageCount',
+  'size',
+  'mtimeMs',
+  'healthStatus',
+  'signature'
+];
+
+function scanEntryKey(entry = {}) {
+  const identity = entry.locationId || entry.path || entry.legacyId || entry.contentId || '';
+  // A one-shot folder legitimately produces a manga entry and a chapter entry
+  // with the same location. Include the record type so the comparison index
+  // does not treat that pair as a duplicate and force a false-positive rescan.
+  return identity ? `${String(entry.type || 'entry')}:${String(identity).trim()}` : '';
+}
+
+function areScanEntriesEquivalent(left, right) {
+  return SCAN_ENTRY_COMPARISON_FIELDS.every((field) => {
+    const leftValue = left?.[field] ?? null;
+    const rightValue = right?.[field] ?? null;
+    if (field === 'path') return normalizePathKey(leftValue) === normalizePathKey(rightValue);
+    return leftValue === rightValue;
+  });
+}
+
+function areScanIndexesEquivalent(previousIndex, nextIndex) {
+  const previousEntries = getScanEntries(previousIndex);
+  const nextEntries = getScanEntries(nextIndex);
+  if (previousEntries.length !== nextEntries.length) return false;
+
+  const previousByKey = new Map(previousEntries.map((entry) => [scanEntryKey(entry), entry]));
+  if (previousByKey.size !== previousEntries.length || previousByKey.has('')) return false;
+
+  return nextEntries.every((entry) => {
+    const previous = previousByKey.get(scanEntryKey(entry));
+    return Boolean(previous && areScanEntriesEquivalent(previous, entry));
+  });
+}
+
 function buildPreviousScanLookup(persistedState = {}) {
   const entries = getScanEntries(persistedState?.scanIndex);
   const byPath = new Map();
@@ -320,11 +366,12 @@ function resolveCollectionIdsForManga(mangaId, persistedState) {
 }
 
 function resolveCover(metadata, firstChapter = null) {
-  if (metadata.coverPath && fs.existsSync(metadata.coverPath)) {
+  const automaticOnly = metadata.coverMode === 'auto';
+  if (!automaticOnly && metadata.coverPath && fs.existsSync(metadata.coverPath)) {
     return { coverSrc: toFileSrc(metadata.coverPath), coverType: 'custom', coverMediaType: 'image', coverFilePath: metadata.coverPath, coverPageNumber: 1 };
   }
 
-  if (metadata.onlineCoverPath && fs.existsSync(metadata.onlineCoverPath)) {
+  if (!automaticOnly && metadata.onlineCoverPath && fs.existsSync(metadata.onlineCoverPath)) {
     return { coverSrc: toFileSrc(metadata.onlineCoverPath), coverType: 'online', coverMediaType: 'image', coverFilePath: metadata.onlineCoverPath, coverPageNumber: 1 };
   }
 
@@ -610,6 +657,7 @@ function scanManga(mangaPath, persistedState, previousScan) {
     coverMediaType,
     coverFilePath,
     coverPageNumber,
+    coverProfile: persistedState.coverProfiles?.[legacyMangaId] || null,
     isFavorite,
     isRead,
     readingState,
@@ -789,5 +837,6 @@ module.exports = {
   isImageFile,
   isPdfFile,
   isCbzFile,
-  buildCompactIndex
+  buildCompactIndex,
+  areScanIndexesEquivalent
 };

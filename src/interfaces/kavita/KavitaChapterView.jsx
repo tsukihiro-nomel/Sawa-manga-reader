@@ -1,12 +1,26 @@
 import { memo, useMemo } from 'react';
 import { ArrowLeft, BookOpen, Clock3, Play } from 'lucide-react';
 import MediaAsset from '../../components/MediaAsset.jsx';
+import PreviewDisplayControls from '../../components/PreviewDisplayControls.jsx';
+import { normalizePreviewSize, resolvePreviewSize } from '../../utils/previewQuality.js';
 import { resolveTabOpenIntent } from './tabInteractions.js';
 
-function KavitaChapterView({ manga, chapter, annotations = [], onBack, onReadFrom, onReadFromInNewTab }) {
+function KavitaChapterView({
+  manga,
+  chapter,
+  annotations = [],
+  pagePreviewSize = 'comfortable',
+  previewQuality = 'balanced',
+  onPreviewSettingsChange,
+  onBack,
+  onReadFrom,
+  onReadFromInNewTab
+}) {
   const pages = chapter.pages || [];
   const preview = pages[0];
   const title = chapter.displayTitle || chapter.name || 'Chapitre';
+  const normalizedPagePreviewSize = normalizePreviewSize(pagePreviewSize);
+  const pagePreviewDimensions = resolvePreviewSize('page', normalizedPagePreviewSize);
   const minutes = Math.max(1, Math.round(Number(chapter.pageCount || pages.length || 0) * 0.55));
   const chapterAnnotations = useMemo(
     () => annotations.filter((annotation) => annotation.chapterId === chapter.id),
@@ -65,7 +79,17 @@ function KavitaChapterView({ manga, chapter, annotations = [], onBack, onReadFro
         <button type="button">Details</button>
         <button type="button">Annotations {chapterAnnotations.length}</button>
       </nav>
-      <div className="kv-page-preview-grid">
+      <div className="kv-preview-controls-row">
+        <PreviewDisplayControls
+          compact
+          kind="page"
+          size={normalizedPagePreviewSize}
+          quality={previewQuality}
+          onSizeChange={(value) => onPreviewSettingsChange?.({ pagePreviewSize: value })}
+          onQualityChange={(value) => onPreviewSettingsChange?.({ previewQuality: value })}
+        />
+      </div>
+      <div className="kv-page-preview-grid" data-preview-size={normalizedPagePreviewSize}>
         {pages.slice(0, 60).map((page) => (
           <button
             key={page.id}
@@ -78,7 +102,7 @@ function KavitaChapterView({ manga, chapter, annotations = [], onBack, onReadFro
             onMouseDown={(event) => {
               if (event.button === 1) event.preventDefault();
             }}
-            onMouseUp={(event) => {
+            onAuxClick={(event) => {
               if (event.button !== 1) return;
               event.preventDefault();
               event.stopPropagation();
@@ -92,8 +116,10 @@ function KavitaChapterView({ manga, chapter, annotations = [], onBack, onReadFro
               mediaType={page.sourceType || 'image'}
               filePath={page.path}
               pageNumber={page.pdfPageNumber || page.index + 1}
-              maxWidth={260}
-              maxHeight={360}
+              maxWidth={pagePreviewDimensions.width}
+              maxHeight={pagePreviewDimensions.height}
+              thumbnail
+              previewQuality={previewQuality}
             />
             <span>Page {page.index + 1}</span>
           </button>
